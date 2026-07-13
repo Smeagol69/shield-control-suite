@@ -1,0 +1,64 @@
+{
+  "name": "shield-control",
+  "productName": "Shield Control",
+  "version": "1.0.0",
+  "description": "Desktop control center for NVIDIA Shield TV over adb — screen control, file transfer, APK install.",
+  "author": "roesler",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "dev.roesler.shieldcontrol",
+    "productName": "Shield Control",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor",
+        "to": "vendor"
+      }
+    ],
+    "asar": true,
+    "publish": null,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Shield Control Setup ${version}.exe"
+    },
+    "portable": {
+      "artifactName": "ShieldControl-${version}-portable.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3"
+  }
+}

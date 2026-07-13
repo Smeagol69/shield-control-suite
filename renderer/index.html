@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>Shield Control</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-status="connecting">
+
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path d="M12 2 20 5v6c0 4.6-3.2 8.4-8 11-4.8-2.6-8-6.4-8-11V5l8-3z"
+              fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M10 9v6l5-3-5-3z" fill="var(--green)"/>
+      </svg>
+      <h1>Shield Control</h1>
+    </div>
+
+    <div class="header-right">
+      <button id="screenshotBtn" class="ghost icon-btn" title="Screenshot the Shield → Downloads">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 8a2 2 0 0 1 2-2h1.5l1-2h7l1 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"
+          fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      </button>
+      <button id="rebootBtn" class="ghost icon-btn" title="Reboot the Shield">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7 6a8 8 0 1 0 10 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="status" id="status" title="Connection status">
+        <span class="dot"></span>
+        <span id="statusText">Connecting…</span>
+      </div>
+      <button id="reconnectBtn" class="ghost icon-btn" title="Reconnect now">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="left">
+      <div class="card control-card">
+        <div class="device">
+          <div id="deviceName">NVIDIA Shield</div>
+          <div id="deviceMeta">Looking for the Shield…</div>
+        </div>
+        <button id="controlBtn" class="primary" disabled>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <rect x="2" y="4" width="20" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="M8 21h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M10 8v5l4.5-2.5L10 8z" fill="currentColor"/>
+          </svg>
+          <span id="controlLabel">Control Shield</span>
+        </button>
+        <p class="hint">Right-click = Back · Middle-click = Home · Alt+F = fullscreen</p>
+      </div>
+
+      <div class="card status-card">
+        <div class="status-head">
+          <span>Device status</span>
+          <button id="statusRefresh" class="ghost icon-btn" title="Refresh status now">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div id="statusBody" class="status-body">
+          <div class="status-empty">Waiting for the Shield…</div>
+        </div>
+      </div>
+
+      <div class="card dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">
+          <path d="M12 16V6m0 0-4 4m4-4 4 4" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <b>Drop files anywhere</b>
+        <span>Pick <em>Download</em>, <em>KodiDrop</em>, or the open folder when the targets appear</span>
+        <span class="apk-note">.apk files are installed automatically</span>
+      </div>
+
+      <div class="transfers" id="transfers"></div>
+    </section>
+
+    <section class="card browser">
+      <div class="browser-bar">
+        <button id="upBtn" class="ghost icon-btn" title="Up one folder">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 19V5m0 0-6 6m6-6 6 6"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="crumbs" id="crumbs"></div>
+        <span class="rootchip" id="rootChip" hidden>root</span>
+        <button id="refreshBtn" class="ghost icon-btn" title="Refresh">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="navchips" id="navchips"></div>
+      <div class="listing" id="listing">
+        <div class="placeholder">Waiting for the Shield…</div>
+      </div>
+    </section>
+  </main>
+
+  <div class="veil" id="veil" aria-hidden="true">
+    <div class="veil-targets">
+      <div class="veil-target" id="vtDownload" data-dir="">
+        <b>Download</b><span id="vtDownloadPath"></span>
+      </div>
+      <div class="veil-target" id="vtKodi" data-dir="">
+        <b>KodiDrop</b><span id="vtKodiPath"></span>
+      </div>
+      <div class="veil-target" id="vtHere" data-dir="">
+        <b>This folder</b><span id="vtHerePath"></span>
+      </div>
+    </div>
+    <div class="veil-note">.apk files are installed automatically, wherever you drop them</div>
+  </div>
+
+  <div class="overlay" id="logOverlay">
+    <div class="overlay-panel">
+      <div class="overlay-head">
+        <b>Recent Kodi errors</b>
+        <button id="logClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <pre id="logLines"></pre>
+      <div class="overlay-actions">
+        <button id="logPull" class="ghost">Pull full kodi.log → Downloads</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
