@@ -44,12 +44,33 @@ function loadConfig() {
   }
 }
 
-function saveConfig(patch) {
-  Object.assign(config, patch);
+// persistence is debounced+async so the hot path (a config write per folder
+// navigation) never blocks on synchronous disk I/O; flushConfigSync() drains it
+// on shutdown so nothing is lost.
+let saveTimer = null;
+let savePending = false;
+
+function writeConfig(sync) {
+  savePending = false;
+  const json = JSON.stringify(config, null, 2);
   try {
     fs.mkdirSync(path.dirname(configFile()), { recursive: true });
-    fs.writeFileSync(configFile(), JSON.stringify(config, null, 2));
+    if (sync) fs.writeFileSync(configFile(), json);
+    else fs.writeFile(configFile(), json, () => {});
   } catch {}
+}
+
+function saveConfig(patch) {
+  const before = JSON.stringify(config);
+  Object.assign(config, patch);
+  if (JSON.stringify(config) === before) return; // e.g. re-listing the same folder
+  savePending = true;
+  if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; if (savePending) writeConfig(false); }, 400);
+}
+
+function flushConfigSync() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  if (savePending) writeConfig(true);
 }
 
 loadConfig();
@@ -288,7 +309,14 @@ function startPolling() {
   startDeviceTracker();
   setInterval(() => {
     const interval = trackProc ? 15000 : 4000;
-    if (Date.now() - lastHealthTs >= interval) healthCheck();
+    if (Date.now() - lastHealthTs < interval) return;
+    // telemetry that just succeeded already proves the device is alive, and the
+    // track-devices stream surfaces drops — skip the redundant `adb devices` spawn
+    if (state.status === 'connected' && trackProc && Date.now() - (status.ts || 0) < 12000) {
+      lastHealthTs = Date.now();
+      return;
+    }
+    healthCheck();
   }, 2000);
 }
 
@@ -726,7 +754,15 @@ async function pump() {
   t.status = 'active';
   sendTransfer(t);
   try {
-    const res = await job.run((pct) => { t.pct = pct; sendTransfer(t); });
+    // adb repeats the same integer % across chunks — only emit when it moves,
+    // so a large push doesn't fire a full IPC + renderer rebuild per chunk
+    let lastPct = -2;
+    const res = await job.run((pct) => {
+      if (pct === lastPct) return;
+      lastPct = pct;
+      t.pct = pct;
+      sendTransfer(t);
+    });
     t.status = res.ok ? 'done' : 'error';
     if (res.ok) t.pct = 100;
     t.detail = res.detail || '';
@@ -1123,7 +1159,7 @@ function createWindow() {
   const wake = () => { if (Date.now() - (status.ts || 0) > 4000) collectFast(); };
   win.on('focus', wake);
   win.on('restore', wake);
-  win.on('close', () => { try { saveConfig({ bounds: win.getBounds() }); } catch {} });
+  win.on('close', () => { try { saveConfig({ bounds: win.getBounds() }); flushConfigSync(); } catch {} });
   win.on('closed', () => { win = null; });
 }
 
@@ -1159,6 +1195,7 @@ if (!gotLock) {
 
   app.on('will-quit', () => {
     quitting = true;
+    flushConfigSync();
     try { if (trackProc) trackProc.kill(); } catch {}
     try { if (scrcpyProc) scrcpyProc.kill(); } catch {}
     // leave no orphan adb.exe behind — reconnect on next launch takes ~1s
