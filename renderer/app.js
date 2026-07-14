@@ -390,13 +390,24 @@ els.logPull.addEventListener('click', async () => {
 });
 
 // ---------------- file browser ----------------
+let pendingDir = null;
 async function refresh(dir) {
-  if (loadingDir) return;
+  if (loadingDir) {
+    pendingDir = dir; // remember the latest request instead of dropping the click
+    return;
+  }
   loadingDir = true;
   els.listing.classList.add('loading');
   const res = await window.shield.listDir(dir);
   loadingDir = false;
   els.listing.classList.remove('loading');
+
+  if (pendingDir) {
+    const next = pendingDir;
+    pendingDir = null;
+    refresh(next);
+    return;
+  }
 
   if (!res.ok) {
     renderListError(res.error || 'Could not list folder', dir);
@@ -559,8 +570,20 @@ window.addEventListener('dragenter', (e) => {
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('dragleave', (e) => {
   e.preventDefault();
+  // relatedTarget is null when the drag truly leaves the window — depth counting
+  // alone can desync when veil targets appear/vanish mid-drag
+  if (e.relatedTarget == null) {
+    hideVeil();
+    return;
+  }
   dragDepth = Math.max(0, dragDepth - 1);
   if (!dragDepth) hideVeil();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    hideVeil();
+    els.logOverlay.classList.remove('show');
+  }
 });
 
 function dropPaths(e) {
@@ -600,15 +623,22 @@ window.addEventListener('drop', (e) => sendTo(e, cfg.pushDir));
 // ---------------- transfers ----------------
 const transfers = new Map();
 
+let browserRefreshTimer = null;
+function scheduleBrowserRefresh() {
+  // multi-file drops finish in bursts — refresh the listing once, not per file
+  clearTimeout(browserRefreshTimer);
+  browserRefreshTimer = setTimeout(() => refresh(currentDir), 600);
+}
+
 window.shield.onTransfer((t) => {
   transfers.set(t.id, t);
   if (transfers.size > 40) {
-    const oldest = [...transfers.values()].filter((x) => x.status === 'done')[0];
-    if (oldest) transfers.delete(oldest.id);
+    const victim = [...transfers.values()].find((x) => x.status === 'done' || x.status === 'error');
+    if (victim) transfers.delete(victim.id);
   }
   renderTransfers();
   if (t.status === 'done') {
-    if (t.kind === 'push') refresh(currentDir);
+    if (t.kind === 'push') scheduleBrowserRefresh();
     setTimeout(() => {
       if (transfers.get(t.id) === t) {
         transfers.delete(t.id);

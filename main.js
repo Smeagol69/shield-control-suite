@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execFile, execFileSync } = require('child_process');
@@ -235,9 +235,14 @@ async function connectFlow(trigger) {
   }
 }
 
-function startPolling() {
-  setInterval(async () => {
-    if (connectBusy || !binaries.adb) return;
+let healthBusy = false;
+let lastHealthTs = 0;
+
+async function healthCheck() {
+  if (healthBusy || connectBusy || !binaries.adb) return;
+  healthBusy = true;
+  lastHealthTs = Date.now();
+  try {
     const devices = await adbDevices();
     if (state.status === 'connected' && state.serial && devices.get(state.serial) === 'device') {
       // opportunistic upgrade: USB session but WiFi came back
@@ -251,7 +256,40 @@ function startPolling() {
     } else if (state.status === 'connected') {
       setState({ status: 'connecting', transport: null, serial: null, detail: 'Connection lost — reconnecting…' });
     }
-  }, 4000);
+  } finally {
+    healthBusy = false;
+  }
+}
+
+// `adb track-devices` streams a frame whenever the device list changes —
+// instant connect/disconnect reactions with far fewer adb invocations.
+// The periodic check stays as a safety net (stretched while the tracker lives).
+let trackProc = null;
+let trackKick = null;
+let quitting = false;
+
+function startDeviceTracker() {
+  if (!binaries.adb || trackProc || quitting) return;
+  const child = spawn(ADB_EXE, ['track-devices'], { windowsHide: true });
+  child.stdout.on('data', () => {
+    if (trackKick) return;
+    trackKick = setTimeout(() => { trackKick = null; healthCheck(); }, 250);
+  });
+  child.stderr.on('data', () => {});
+  child.on('error', () => { trackProc = null; });
+  child.on('close', () => {
+    trackProc = null;
+    if (!quitting) setTimeout(startDeviceTracker, 5000); // adb server bounced — reattach
+  });
+  trackProc = child;
+}
+
+function startPolling() {
+  startDeviceTracker();
+  setInterval(() => {
+    const interval = trackProc ? 15000 : 4000;
+    if (Date.now() - lastHealthTs >= interval) healthCheck();
+  }, 2000);
 }
 
 // ---------------------------------------------------------------------------
@@ -297,10 +335,11 @@ const FAST_SCRIPT = [
   "dumpsys thermalservice 2>/dev/null | sed -n '/Current temperatures from HAL/,$p' | grep 'Temperature{' | head -12",
   'echo ":::adb"',
   'echo "service=$(getprop service.adb.tcp.port) persist=$(getprop persist.adb.tcp.port)"',
+  'PKGS=$(pm list packages org.xbmc 2>/dev/null | sed "s/^package://")',
   'echo ":::kodi"',
-  'pm list packages org.xbmc 2>/dev/null | sed "s/^package://" | head -5',
+  'echo "$PKGS" | head -5',
   'echo ":::kodipid"',
-  'K=$(pm list packages org.xbmc 2>/dev/null | head -1 | sed "s/^package://")',
+  'K=$(echo "$PKGS" | head -1)',
   'if [ -n "$K" ]; then pidof "$K" 2>/dev/null || echo none; else echo none; fi',
   'echo ":::media"',
   'dumpsys media_session 2>/dev/null | grep -E "package=|active=|state=PlaybackState|description=" | head -60',
@@ -433,9 +472,12 @@ function pushStatus() {
   if (win && !win.isDestroyed()) win.webContents.send('status:update', { ...status });
 }
 
+// telemetry only feeds the UI — don't poll the device while nobody's looking
+const winActive = () => !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized();
+
 let loggedFirstStatus = false;
 async function collectFast() {
-  if (fastBusy || state.status !== 'connected' || !state.serial) return;
+  if (fastBusy || state.status !== 'connected' || !state.serial || !winActive()) return;
   fastBusy = true;
   try {
     if (rootAvailable === null) await checkRoot();
@@ -469,7 +511,7 @@ async function collectFast() {
 }
 
 async function collectSlow() {
-  if (slowBusy || state.status !== 'connected' || !state.serial) return;
+  if (slowBusy || state.status !== 'connected' || !state.serial || !winActive()) return;
   slowBusy = true;
   try {
     const r = await runAdb(['-s', state.serial, 'shell', slowScript()], { timeoutMs: 30000 });
@@ -725,12 +767,13 @@ function handlePull({ remotePath, name, size }) {
   if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
   if (typeof remotePath !== 'string' || !remotePath.startsWith('/')) return { ok: false, error: 'bad path' };
   const serial = state.serial;
-  const local = uniqueLocalPath(resolvePullDir(), sanitizeName(name || path.posix.basename(remotePath)));
   const expected = Number(size) > 0 ? Number(size) : 0;
   enqueue({
     kind: 'pull',
     name: path.posix.basename(remotePath),
     run: async (report) => {
+      // resolve the local name at run time — queued same-name pulls each get a fresh slot
+      const local = uniqueLocalPath(resolvePullDir(), sanitizeName(name || path.posix.basename(remotePath)));
       const { code, tail } = await spawnAdbProgress(['-s', serial, 'pull', remotePath, local], report);
       if (code === 0) return { ok: true, detail: `Saved to ${local}`, localPath: local };
       // scoped-storage paths deny adb's sync service — root cat gets through
@@ -745,7 +788,7 @@ function handlePull({ remotePath, name, size }) {
       return { ok: false, detail: lastLine(tail) || 'pull failed' };
     },
   });
-  return { ok: true, dest: local };
+  return { ok: true };
 }
 
 // Kodi's log hides behind scoped storage — stream it out via root cat
@@ -912,8 +955,20 @@ function registerIpc() {
 // ---------------------------------------------------------------------------
 // Window + app lifecycle
 // ---------------------------------------------------------------------------
+// ignore remembered bounds that would restore off-screen (monitor unplugged)
+function safeBounds() {
+  const b = config.bounds;
+  if (!b || typeof b.x !== 'number' || typeof b.width !== 'number') return {};
+  const visible = screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width - 40 && b.x + b.width > a.x + 40 &&
+           b.y < a.y + a.height - 40 && b.y >= a.y - 20;
+  });
+  return visible ? b : {};
+}
+
 function createWindow() {
-  const b = config.bounds || {};
+  const b = safeBounds();
   win = new BrowserWindow({
     width: b.width || 1180,
     height: b.height || 780,
@@ -921,6 +976,7 @@ function createWindow() {
     y: b.y,
     minWidth: 960,
     minHeight: 640,
+    show: false,
     backgroundColor: '#0c0e11',
     autoHideMenuBar: true,
     title: 'Shield Control',
@@ -929,10 +985,16 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       spellcheck: false,
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.once('ready-to-show', () => win.show());
+  // catch up instantly when the user comes back instead of waiting a poll tick
+  const wake = () => { if (Date.now() - (status.ts || 0) > 4000) collectFast(); };
+  win.on('focus', wake);
+  win.on('restore', wake);
   win.on('close', () => { try { saveConfig({ bounds: win.getBounds() }); } catch {} });
   win.on('closed', () => { win = null; });
 }
@@ -968,6 +1030,8 @@ if (!gotLock) {
   app.on('window-all-closed', () => app.quit());
 
   app.on('will-quit', () => {
+    quitting = true;
+    try { if (trackProc) trackProc.kill(); } catch {}
     try { if (scrcpyProc) scrcpyProc.kill(); } catch {}
     // leave no orphan adb.exe behind — reconnect on next launch takes ~1s
     try {

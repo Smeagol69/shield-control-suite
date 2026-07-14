@@ -27,10 +27,22 @@
     "extraResources": [
       {
         "from": "vendor",
-        "to": "vendor"
+        "to": "vendor",
+        "filter": [
+          "**/*",
+          "!platform-tools/fastboot.exe",
+          "!platform-tools/mke2fs.exe",
+          "!platform-tools/make_f2fs.exe",
+          "!platform-tools/make_f2fs_casefold.exe",
+          "!platform-tools/etc1tool.exe",
+          "!platform-tools/hprof-conv.exe",
+          "!platform-tools/sqlite3.exe",
+          "!scrcpy/adb.exe"
+        ]
       }
     ],
     "asar": true,
+    "compression": "maximum",
     "publish": null,
     "win": {
       "target": [
