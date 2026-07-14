@@ -50,6 +50,24 @@ the raw backing store at `/data/media`. Pulls fall back to `su cat` the same way
 `ip`, `port`, `pushDir` (default drop target), `kodiDropDir`, `pullDir`
 (default: this PC's Downloads), `backupDir` (default `/sdcard/backup`), `lastDir`.
 
+## Patching (Morphe + De-Vanced)
+
+The Shield runs [Morphe](https://morphe.software/) — an on-device app patcher (the
+ReVanced successor) that applies a patch bundle (here the
+[De-Vanced](https://github.com/RookieEnough/De-Vanced) `patches.jar`) to a source
+APK and installs the result. Morphe has a phone-oriented UI with no D-pad support,
+so the **Patching · Morphe** card:
+
+- detects Morphe (version), the loaded De-Vanced bundle (size/date, read via root),
+  and installed patched apps (`*revanced*` / `*rvx*` packages with versions)
+- **Open Morphe on desktop** launches Morphe on the Shield and opens scrcpy, so you
+  drive the patcher with mouse and keyboard from Windows
+
+Patch flow: click *Open Morphe on desktop*, pick the app + patches in the mirrored
+window, let Morphe build and install. New/updated bundles install like any APK —
+drop them on the app. (Fetching De-Vanced bundle releases from GitHub directly into
+the app is a planned follow-on.)
+
 ## Notes
 
 - Drops anywhere in the window: regular files/folders → `adb push` to the folder shown

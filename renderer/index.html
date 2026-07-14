@@ -73,6 +73,29 @@
         </div>
       </div>
 
+      <div class="card patch-card" id="patchCard">
+        <div class="status-head">
+          <span>Patching · Morphe</span>
+          <button id="patchRefresh" class="ghost icon-btn" title="Re-check Morphe">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div id="patchBody" class="status-body">
+          <div class="status-empty">Checking Morphe…</div>
+        </div>
+        <div class="patch-actions">
+          <button id="openMorpheBtn" class="primary sm" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <rect x="2" y="4" width="20" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+              <path d="M8 21h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span>Open Morphe on desktop</span>
+          </button>
+          <p class="hint">Launches Morphe on the Shield and mirrors it here so you can patch with mouse &amp; keyboard.</p>
+        </div>
+      </div>
+
       <div class="card dropzone" id="dropzone">
         <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">
           <path d="M12 16V6m0 0-4 4m4-4 4 4" fill="none" stroke="currentColor" stroke-width="2"

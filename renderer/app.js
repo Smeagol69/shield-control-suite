@@ -39,6 +39,9 @@ const els = {
   consoleRun: $('#consoleRun'),
   consoleSerial: $('#consoleSerial'),
   consolePrompt: $('#consolePrompt'),
+  patchBody: $('#patchBody'),
+  patchRefresh: $('#patchRefresh'),
+  openMorpheBtn: $('#openMorpheBtn'),
 };
 
 const SVG_FOLDER =
@@ -120,7 +123,8 @@ function applyState(s) {
   renderStatus();
 
   if (s.status === 'connected' && !listingFresh && !loadingDir) refresh(currentDir);
-  if (s.status !== 'connected') listingFresh = false;
+  if (s.status === 'connected' && !morpheState && !morpheLoading) refreshMorphe();
+  if (s.status !== 'connected') { listingFresh = false; morpheState = null; renderPatch({ offline: true }); }
 }
 
 function updateControlBtn() {
@@ -468,6 +472,68 @@ els.consoleCmd.addEventListener('keydown', (e) => {
     else { histIdx = cmdHistory.length; els.consoleCmd.value = ''; }
     e.preventDefault();
   }
+});
+
+// ---------------- patching (Morphe) ----------------
+let morpheState = null;
+let morpheLoading = false;
+
+async function refreshMorphe() {
+  if (morpheLoading) return;
+  if (state.status !== 'connected') { renderPatch({ offline: true }); return; }
+  morpheLoading = true;
+  try {
+    const r = await window.shield.morpheStatus();
+    morpheState = r && r.ok ? r : null;
+    renderPatch(r || {});
+  } finally {
+    morpheLoading = false;
+  }
+}
+
+function renderPatch(m) {
+  const body = els.patchBody;
+  body.replaceChildren();
+  els.openMorpheBtn.disabled = !(m && m.ok && m.installed && state.status === 'connected');
+
+  if (!m || m.offline || (!m.ok && !m.error)) {
+    const e = document.createElement('div');
+    e.className = 'status-empty';
+    e.textContent = state.status === 'connected' ? 'Checking Morphe…' : 'Waiting for the Shield…';
+    body.append(e);
+    return;
+  }
+  if (!m.installed) {
+    const e = document.createElement('div');
+    e.className = 'status-empty';
+    e.textContent = 'Morphe not installed — drop its APK to install, then patch';
+    body.append(e);
+    return;
+  }
+
+  body.append(sRow('Morphe', `v${m.version}`, { dot: 'ok', tone: 'good' }));
+
+  if (m.bundle) {
+    const n = m.bundle.count > 1 ? ` ×${m.bundle.count}` : '';
+    body.append(sRow('Patch bundle', `De-Vanced${n} · ${fmtSize(m.bundle.sizeBytes)}`,
+      { tone: 'good', dot: 'ok', title: `patches.jar · ${m.bundle.mtime}` }));
+  } else {
+    body.append(sRow('Patch bundle', m.rootKnown ? 'none loaded' : 'need root to read', { tone: 'dim' }));
+  }
+
+  if (m.patched && m.patched.length) {
+    body.append(sSection('Patched apps'));
+    for (const a of m.patched) body.append(sRow(a.name, a.version, { tone: 'good', title: a.pkg }));
+  } else {
+    body.append(sRow('Patched apps', 'none yet', { tone: 'dim' }));
+  }
+}
+
+els.patchRefresh.addEventListener('click', refreshMorphe);
+els.openMorpheBtn.addEventListener('click', async () => {
+  const r = await window.shield.morpheOpen();
+  if (r && r.ok) toast('Launching Morphe on the Shield — mirror opening…', 'info');
+  else toast((r && r.error) || 'Could not open Morphe');
 });
 
 // ---------------- file browser ----------------

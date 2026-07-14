@@ -387,6 +387,11 @@ const APP_NAMES = {
   'com.amazon.amazonvideo.livingroom': 'Prime Video',
   'com.disney.disneyplus': 'Disney+',
   'com.spotify.tv.android': 'Spotify',
+  'app.revanced.android.youtube': 'YouTube (ReVanced)',
+  'app.revanced.android.apps.youtube.music': 'YT Music (ReVanced)',
+  'app.revanced.android.gms': 'GmsCore',
+  'app.rvx.android.youtube': 'YouTube (RVX)',
+  'com.revanced.net.revancedmanager': 'ReVanced Manager',
 };
 function appName(pkg) {
   if (APP_NAMES[pkg]) return APP_NAMES[pkg];
@@ -549,6 +554,80 @@ async function collectSlow() {
 function startStatusPolling() {
   setInterval(collectFast, 8000);
   setInterval(collectSlow, 60000);
+}
+
+// ---------------------------------------------------------------------------
+// Patching (Morphe on-device patcher + De-Vanced patch bundle)
+// ---------------------------------------------------------------------------
+const MORPHE_PKG = 'app.morphe.manager';
+
+// Morphe is a phone-oriented app with no D-pad UI — this reads its state so the
+// desktop can present it, and morphe:open drives it over scrcpy.
+async function collectMorphe() {
+  if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
+  const script = [
+    'echo ":::ver"',
+    `dumpsys package ${MORPHE_PKG} 2>/dev/null | grep -m1 versionName | cut -d= -f2`,
+    'echo ":::act"',
+    `cmd package resolve-activity --brief ${MORPHE_PKG} 2>/dev/null | tail -1`,
+    'echo ":::patched"',
+    // ReVanced/RVX patched packages carry their own ids — list them with versions.
+    // single-quote the sed/grep so an alternation pipe can't be mis-split by any quoting layer
+    "for p in $(pm list packages 2>/dev/null | sed 's/^package://' | grep -E 'revanced|rvx'); do",
+    '  echo "$p=$(dumpsys package $p 2>/dev/null | grep -m1 versionName | cut -d= -f2)"',
+    'done',
+  ].join('\n');
+  const r = await runAdb(['-s', state.serial, 'shell', script], { timeoutMs: 25000 });
+  const sec = splitSections(r.out);
+
+  const version = (sec.ver || '').trim();
+  const installed = !!version;
+  const activity = (sec.act || '').trim() || `${MORPHE_PKG}/.MainActivity_Default`;
+
+  const patched = [];
+  for (const line of (sec.patched || '').split(/\r?\n/)) {
+    const m = line.trim().match(/^(\S+?)=(.*)$/);
+    if (m && m[1].includes('.')) patched.push({ pkg: m[1], name: appName(m[1]), version: m[2] || '?' });
+  }
+
+  // patch bundle (De-Vanced patches.jar) lives in app-private storage — needs root
+  let bundle = null;
+  if (installed) {
+    if (rootAvailable === null) await checkRoot();
+    if (rootAvailable) {
+      const b = await runAdb(
+        ['-s', state.serial, 'shell', `su -c ${shq(`ls -la /data/data/${MORPHE_PKG}/app_patch_bundles/*/patches.jar 2>/dev/null`)}`],
+        { timeoutMs: 15000 }
+      );
+      const bm = b.out.trim().match(/\s(\d+)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s/);
+      const count = b.out.split(/\r?\n/).filter((l) => l.includes('patches.jar')).length;
+      if (bm) bundle = { sizeBytes: Number(bm[1]), mtime: bm[2], count };
+    }
+  }
+
+  console.log(
+    `[shield] morphe: ${installed ? 'v' + version : 'not installed'}` +
+    (bundle ? ` · bundle ${Math.round((bundle.sizeBytes / 1048576) * 10) / 10}MB` : '') +
+    ` · patched=${patched.map((a) => a.pkg).join(',') || 'none'}`
+  );
+  return {
+    ok: true,
+    installed,
+    version,
+    activity,
+    package: MORPHE_PKG,
+    bundle,
+    patched,
+    rootKnown: rootAvailable === true,
+  };
+}
+
+function openMorphe() {
+  if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Shield is not connected' };
+  // launch Morphe on the device, then mirror it so the phone-style UI is mouse-drivable
+  runAdb(['-s', state.serial, 'shell', `monkey --pct-syskeys 0 -p ${MORPHE_PKG} 1`], { timeoutMs: 15000 })
+    .then(() => setTimeout(() => launchScrcpy(), 600));
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -994,6 +1073,8 @@ function registerIpc() {
   });
   ipcMain.handle('fs:delete', (_e, p) => deletePath(p));
   ipcMain.handle('shell:exec', (_e, { cmd, root } = {}) => runShell(cmd, !!root));
+  ipcMain.handle('morphe:status', () => collectMorphe());
+  ipcMain.handle('morphe:open', () => openMorphe());
   ipcMain.handle('reveal', (_e, p) => {
     if (typeof p === 'string' && p && fs.existsSync(p)) shell.showItemInFolder(p);
   });

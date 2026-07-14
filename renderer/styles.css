@@ -276,6 +276,18 @@ button:disabled { cursor: default; }
   border-radius: 6px;
 }
 
+/* ---------------- patching card ---------------- */
+.patch-card { padding: 0; overflow: hidden; }
+.patch-actions {
+  padding: 8px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.primary.sm { padding: 10px; font-size: 13.5px; }
+.patch-actions .hint { text-align: center; }
+
 /* ---------------- dropzone ---------------- */
 .dropzone {
   display: flex;
