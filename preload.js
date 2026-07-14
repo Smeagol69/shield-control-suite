@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('shield', {
   homeDir: () => ipcRenderer.invoke('fs:home'),
   pull: (remotePath, name, size) => ipcRenderer.invoke('fs:pull', { remotePath, name, size }),
   send: (paths, remoteDir) => ipcRenderer.invoke('fs:send', { paths, remoteDir }),
+  deletePath: (remotePath) => ipcRenderer.invoke('fs:delete', remotePath),
+  execShell: (cmd, root) => ipcRenderer.invoke('shell:exec', { cmd, root }),
   reveal: (p) => ipcRenderer.invoke('reveal', p),
 
   // dropped DOM File -> absolute Windows path (File.path was removed in Electron 32+)

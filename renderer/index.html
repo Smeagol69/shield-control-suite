@@ -20,6 +20,9 @@
     </div>
 
     <div class="header-right">
+      <button id="consoleBtn" class="ghost icon-btn" title="Open device console (adb shell)">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 9l3 3-3 3M13 15h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      </button>
       <button id="screenshotBtn" class="ghost icon-btn" title="Screenshot the Shield → Downloads">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 8a2 2 0 0 1 2-2h1.5l1-2h7l1 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"
           fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
@@ -129,6 +132,29 @@
       <pre id="logLines"></pre>
       <div class="overlay-actions">
         <button id="logPull" class="ghost">Pull full kodi.log → Downloads</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="consoleOverlay">
+    <div class="overlay-panel console-panel">
+      <div class="overlay-head">
+        <b>Device console — <span id="consoleSerial">adb shell</span></b>
+        <button id="consoleClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <pre id="consoleOut" class="console-out">Type a command below. Examples:
+  pm list packages | grep revanced
+  getprop ro.build.version.release
+  dumpsys battery
+Enable “root” to run through Magisk su.</pre>
+      <div class="console-input">
+        <label class="console-root" title="Run the command through Magisk su">
+          <input type="checkbox" id="consoleRoot" /> root
+        </label>
+        <span class="console-prompt" id="consolePrompt">$</span>
+        <input type="text" id="consoleCmd" spellcheck="false" autocomplete="off"
+               placeholder="adb shell command…" />
+        <button id="consoleRun" class="ghost">Run</button>
       </div>
     </div>
   </div>

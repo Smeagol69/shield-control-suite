@@ -30,6 +30,15 @@ const els = {
   logLines: $('#logLines'),
   logClose: $('#logClose'),
   logPull: $('#logPull'),
+  consoleBtn: $('#consoleBtn'),
+  consoleOverlay: $('#consoleOverlay'),
+  consoleClose: $('#consoleClose'),
+  consoleOut: $('#consoleOut'),
+  consoleCmd: $('#consoleCmd'),
+  consoleRoot: $('#consoleRoot'),
+  consoleRun: $('#consoleRun'),
+  consoleSerial: $('#consoleSerial'),
+  consolePrompt: $('#consolePrompt'),
 };
 
 const SVG_FOLDER =
@@ -38,6 +47,10 @@ const SVG_FILE =
   '<svg viewBox="0 0 24 24" width="17" height="17"><path d="M6 2h8l4 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 2v4h4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
 const SVG_DOWNLOAD =
   '<svg viewBox="0 0 24 24" width="15" height="15"><path d="M12 4v10m0 0 4-4m-4 4-4-4M4 19h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const SVG_TRASH =
+  '<svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const SVG_CONFIRM =
+  '<svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 let state = { status: 'connecting', binaries: { adb: true, scrcpy: true } };
 let deviceStatus = { online: false };
@@ -389,6 +402,74 @@ els.logPull.addEventListener('click', async () => {
   else els.logOverlay.classList.remove('show');
 });
 
+// ---------------- device console ----------------
+const cmdHistory = [];
+let histIdx = -1;
+
+function consoleAppend(cls, text) {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text.endsWith('\n') ? text : text + '\n';
+  els.consoleOut.append(span);
+  els.consoleOut.scrollTop = els.consoleOut.scrollHeight;
+}
+
+function openConsole() {
+  els.consoleSerial.textContent = state.serial ? `adb -s ${state.serial}` : 'adb shell';
+  els.consoleOverlay.classList.add('show');
+  setTimeout(() => els.consoleCmd.focus(), 30);
+}
+function closeConsole() { els.consoleOverlay.classList.remove('show'); }
+
+els.consoleBtn.addEventListener('click', openConsole);
+els.consoleClose.addEventListener('click', closeConsole);
+els.consoleOverlay.addEventListener('click', (e) => {
+  if (e.target === els.consoleOverlay) closeConsole();
+});
+els.consoleRoot.addEventListener('change', () => {
+  els.consolePrompt.textContent = els.consoleRoot.checked ? '#' : '$';
+});
+
+let consoleBusy = false;
+async function runConsole() {
+  if (consoleBusy) return;
+  const cmd = els.consoleCmd.value.trim();
+  if (!cmd) return;
+  const asRoot = els.consoleRoot.checked;
+  cmdHistory.push(cmd);
+  histIdx = cmdHistory.length;
+  els.consoleCmd.value = '';
+  consoleAppend('cmd', `${asRoot ? '#' : '$'} ${cmd}`);
+  consoleBusy = true;
+  els.consoleRun.disabled = true;
+  try {
+    const r = await window.shield.execShell(cmd, asRoot);
+    if (!r || !r.ok) {
+      consoleAppend('err', (r && r.error) || 'command failed');
+    } else {
+      if (r.out && r.out.trim()) consoleAppend('', r.out.replace(/\s+$/, ''));
+      if (r.err && r.err.trim()) consoleAppend('err', r.err.replace(/\s+$/, ''));
+      if ((!r.out || !r.out.trim()) && (!r.err || !r.err.trim())) consoleAppend('', '(no output)');
+    }
+  } finally {
+    consoleBusy = false;
+    els.consoleRun.disabled = false;
+    els.consoleCmd.focus();
+  }
+}
+
+els.consoleRun.addEventListener('click', runConsole);
+els.consoleCmd.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); runConsole(); }
+  else if (e.key === 'ArrowUp') {
+    if (histIdx > 0) { histIdx--; els.consoleCmd.value = cmdHistory[histIdx]; e.preventDefault(); }
+  } else if (e.key === 'ArrowDown') {
+    if (histIdx < cmdHistory.length - 1) { histIdx++; els.consoleCmd.value = cmdHistory[histIdx]; }
+    else { histIdx = cmdHistory.length; els.consoleCmd.value = ''; }
+    e.preventDefault();
+  }
+});
+
 // ---------------- file browser ----------------
 let pendingDir = null;
 async function refresh(dir) {
@@ -516,9 +597,10 @@ function renderEntries(entries) {
 
     row.append(icon, name, size, date);
 
+    const actions = document.createElement('span');
+    actions.className = 'actions';
     if (e.type === 'dir') {
       row.addEventListener('click', () => refresh(e.path));
-      row.append(document.createElement('span'));
     } else {
       const pull = document.createElement('button');
       pull.className = 'pull';
@@ -528,10 +610,50 @@ function renderEntries(entries) {
         ev.stopPropagation();
         window.shield.pull(e.path, e.name, e.size);
       });
-      row.append(pull);
+      actions.append(pull);
     }
+    actions.append(makeDeleteButton(e));
+    row.append(actions);
     els.listing.append(row);
   }
+}
+
+// two-click delete: first click arms (turns into a red check), second confirms.
+// auto-disarms after 3s so a stray click can't linger as a live delete.
+function makeDeleteButton(entry) {
+  const btn = document.createElement('button');
+  btn.className = 'del';
+  btn.title = `Delete ${entry.name} from the Shield`;
+  btn.innerHTML = SVG_TRASH;
+  let armTimer = null;
+  const disarm = () => {
+    clearTimeout(armTimer);
+    armTimer = null;
+    btn.classList.remove('armed');
+    btn.innerHTML = SVG_TRASH;
+    btn.title = `Delete ${entry.name} from the Shield`;
+  };
+  btn.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+    if (!armTimer) {
+      btn.classList.add('armed');
+      btn.innerHTML = SVG_CONFIRM;
+      btn.title = `Click again to permanently delete ${entry.name}`;
+      armTimer = setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    btn.disabled = true;
+    const r = await window.shield.deletePath(entry.path);
+    if (r && r.ok) {
+      toast(`Deleted ${entry.name}`, 'info');
+      refresh(currentDir);
+    } else {
+      btn.disabled = false;
+      toast((r && r.error) || `Could not delete ${entry.name}`);
+    }
+  });
+  return btn;
 }
 
 els.upBtn.addEventListener('click', () => {
@@ -583,6 +705,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     hideVeil();
     els.logOverlay.classList.remove('show');
+    els.consoleOverlay.classList.remove('show');
   }
 });
 

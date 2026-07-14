@@ -874,6 +874,51 @@ async function listDir(dirPath) {
   return { ok: true, path: p, entries, viaRoot };
 }
 
+// refusing to rm these even with confirmation — one fat-finger shouldn't wipe the device
+const PROTECTED_PATHS = new Set([
+  '/', '/system', '/vendor', '/data', '/data/data', '/data/media', '/data/media/0',
+  '/sdcard', '/storage', '/storage/emulated', '/storage/emulated/0',
+]);
+
+async function deletePath(remotePath) {
+  if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
+  if (typeof remotePath !== 'string' || !remotePath.startsWith('/')) return { ok: false, error: 'bad path' };
+  const p = path.posix.normalize(remotePath);
+  if (PROTECTED_PATHS.has(p) || p.length < 2) return { ok: false, error: 'refusing to delete a protected path' };
+
+  let r = await runAdb(['-s', state.serial, 'shell', `rm -rf ${shq(p)}`], { timeoutMs: 30000 });
+  if (!r.ok || /permission denied|read-only/i.test(r.err)) {
+    if (rootAvailable === null) await checkRoot();
+    if (rootAvailable) {
+      r = await runAdb(['-s', state.serial, 'shell', `su -c ${shq(`rm -rf ${shq(rootPath(p))}`)}`], { timeoutMs: 30000 });
+    }
+  }
+  // trust nothing — confirm it's actually gone (checks both the FUSE and raw views)
+  const chk = await runAdb(
+    ['-s', state.serial, 'shell', `ls -d ${shq(p)} 2>/dev/null; su -c ${shq(`ls -d ${shq(rootPath(p))}`)} 2>/dev/null`],
+    { timeoutMs: 15000 }
+  );
+  if (chk.out.trim()) return { ok: false, error: lastLine(r.err) || 'delete failed — still present' };
+  console.log(`[shield] deleted ${p}`);
+  return { ok: true };
+}
+
+// arbitrary device command for the in-app console (optionally as root)
+async function runShell(cmd, asRoot) {
+  if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
+  if (typeof cmd !== 'string' || !cmd.trim()) return { ok: false, error: 'empty command' };
+  let args;
+  if (asRoot) {
+    if (rootAvailable === null) await checkRoot();
+    if (!rootAvailable) return { ok: false, error: 'root (su) not available on this device' };
+    args = ['-s', state.serial, 'shell', `su -c ${shq(cmd)}`];
+  } else {
+    args = ['-s', state.serial, 'shell', cmd];
+  }
+  const r = await runAdb(args, { timeoutMs: 45000 });
+  return { ok: true, out: r.out, err: r.ok ? r.err : (r.err || `exit ${1}`), asRoot: !!asRoot };
+}
+
 // ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
@@ -947,6 +992,8 @@ function registerIpc() {
     }
     return { ok: true, queued: files.length, dir };
   });
+  ipcMain.handle('fs:delete', (_e, p) => deletePath(p));
+  ipcMain.handle('shell:exec', (_e, { cmd, root } = {}) => runShell(cmd, !!root));
   ipcMain.handle('reveal', (_e, p) => {
     if (typeof p === 'string' && p && fs.existsSync(p)) shell.showItemInFolder(p);
   });

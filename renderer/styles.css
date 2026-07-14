@@ -466,12 +466,13 @@ body:not([data-status="connected"]) .browser { opacity: 0.55; }
 
 .row {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 90px 130px 34px;
+  grid-template-columns: 30px minmax(0, 1fr) 90px 130px 62px;
   align-items: center;
   gap: 6px;
   padding: 7px 10px;
   border-radius: 8px;
 }
+.row .actions { display: flex; gap: 2px; justify-content: flex-end; }
 .row:hover { background: var(--panel-2); }
 .row.dir { cursor: pointer; }
 .row .icon { display: flex; align-items: center; color: var(--faint); }
@@ -489,7 +490,7 @@ body:not([data-status="connected"]) .browser { opacity: 0.55; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.row .pull {
+.row .pull, .row .del {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -498,10 +499,56 @@ body:not([data-status="connected"]) .browser { opacity: 0.55; }
   border-radius: 6px;
   color: var(--faint);
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
-.row:hover .pull { opacity: 1; }
+.row:hover .pull, .row:hover .del { opacity: 1; }
 .row .pull:hover { color: var(--green); background: var(--green-soft); }
+.row .del:hover { color: var(--red); background: var(--red-soft); }
+.row .del.armed { opacity: 1; color: var(--red); background: var(--red-soft); box-shadow: 0 0 0 1px rgba(229, 72, 77, 0.5) inset; }
+.row .del:disabled { opacity: 0.4; }
+
+/* ---------------- console overlay ---------------- */
+.console-panel { width: min(860px, 92vw); }
+.console-out {
+  color: var(--muted) !important;
+  min-height: 240px;
+  max-height: 56vh;
+}
+.console-out .cmd { color: var(--green); }
+.console-out .err { color: var(--red); }
+.console-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.console-root {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  flex: none;
+}
+.console-root input { accent-color: var(--green); }
+.console-prompt { color: var(--green); font-family: Consolas, monospace; flex: none; }
+.console-input input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12.5px;
+  outline: none;
+}
+.console-input input[type="text"]:focus { border-color: rgba(118, 185, 0, 0.55); }
+.console-input .ghost { flex: none; padding: 7px 16px; }
 
 /* ---------------- drop veil ---------------- */
 .veil {
