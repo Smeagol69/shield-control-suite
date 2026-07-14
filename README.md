@@ -68,6 +68,24 @@ window, let Morphe build and install. New/updated bundles install like any APK �
 drop them on the app. (Fetching De-Vanced bundle releases from GitHub directly into
 the app is a planned follow-on.)
 
+## TV App Store (sideload)
+
+Because the Shield is rooted, Play Integrity fails and the Play Store hides apps like
+Disney+, Hulu, and Max — a `market://` deep link is useless. The **TV App Store**
+(store icon in the header) is therefore a *sideload* catalog of popular Android TV
+apps that shows which are installed and:
+
+- **Get APK** — opens the app's Android-TV build on APKMirror in your browser; download
+  it and drop it on the window to install (the existing APK-drop pipeline).
+- **Install link** — paste a direct `.apk` URL (GitHub release, official CDN, etc.);
+  it downloads, verifies the APK signature bytes, and `adb install`s it with progress.
+- **Open** / **Uninstall** for installed apps (uninstall is two-click to confirm;
+  falls back to `pm uninstall --user 0` for preinstalled apps).
+
+Downloads are always something you initiate and can see the source of — the app never
+auto-fetches APKs. For a permanent fix that makes the Play Store itself work again, a
+Play Integrity Fix Magisk module is the deeper route.
+
 ## Notes
 
 - Drops anywhere in the window: regular files/folders → `adb push` to the folder shown

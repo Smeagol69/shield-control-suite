@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 const { spawn, execFile, execFileSync } = require('child_process');
 
 // ---------------------------------------------------------------------------
@@ -659,6 +661,130 @@ function openMorphe() {
 }
 
 // ---------------------------------------------------------------------------
+// TV App Store — sideload catalog. This Shield is rooted, so Play Integrity
+// fails and the Play Store hides apps like Disney+/Max; they install by sideload
+// (the Android-TV APK from APKMirror + drag-drop, or a direct .apk link).
+// ---------------------------------------------------------------------------
+const TV_APPS = [
+  { pkg: 'com.disney.disneyplus', name: 'Disney+', cat: 'Streaming' },
+  { pkg: 'com.hulu.plus', name: 'Hulu', cat: 'Streaming' },
+  { pkg: 'com.netflix.ninja', name: 'Netflix', cat: 'Streaming' },
+  { pkg: 'com.amazon.amazonvideo.livingroom', name: 'Prime Video', cat: 'Streaming' },
+  { pkg: 'com.wbd.stream', name: 'Max', cat: 'Streaming' },
+  { pkg: 'com.apple.atve.androidtv.appletv', name: 'Apple TV', cat: 'Streaming' },
+  { pkg: 'com.peacocktv.peacockandroid', name: 'Peacock', cat: 'Streaming' },
+  { pkg: 'com.cbs.ott', name: 'Paramount+', cat: 'Streaming' },
+  { pkg: 'com.google.android.youtube.tv', name: 'YouTube', cat: 'Streaming' },
+  { pkg: 'com.crunchyroll.crunchyroid', name: 'Crunchyroll', cat: 'Streaming' },
+  { pkg: 'com.tubitv', name: 'Tubi', cat: 'Streaming' },
+  { pkg: 'tv.pluto.android', name: 'Pluto TV', cat: 'Streaming' },
+  { pkg: 'tv.twitch.android.app', name: 'Twitch', cat: 'Streaming' },
+  { pkg: 'com.plexapp.android', name: 'Plex', cat: 'Media' },
+  { pkg: 'org.jellyfin.androidtv', name: 'Jellyfin', cat: 'Media' },
+  { pkg: 'org.xbmc.kodi', name: 'Kodi', cat: 'Media' },
+  { pkg: 'org.videolan.vlc', name: 'VLC', cat: 'Media' },
+  { pkg: 'com.spotify.tv.android', name: 'Spotify', cat: 'Media' },
+  { pkg: 'com.valvesoftware.steamlink', name: 'Steam Link', cat: 'Tools' },
+  { pkg: 'com.esaba.downloader', name: 'Downloader', cat: 'Tools' },
+];
+
+const apkmirrorSearch = (name) =>
+  `https://www.apkmirror.com/?post_type=app_release&searchtype=apk&s=${encodeURIComponent(name + ' Android TV')}`;
+
+async function collectApps() {
+  const base = TV_APPS.map((a) => ({ ...a, installed: false, source: apkmirrorSearch(a.name) }));
+  if (state.status !== 'connected' || !state.serial) return { ok: true, connected: false, apps: base };
+  const r = await runAdb(['-s', state.serial, 'shell', 'pm list packages'], { timeoutMs: 20000 });
+  const installed = new Set(
+    r.out.split(/\r?\n/).map((l) => l.trim().replace(/^package:/, '')).filter(Boolean)
+  );
+  return { ok: true, connected: true, apps: base.map((a) => ({ ...a, installed: installed.has(a.pkg) })) };
+}
+
+const validPkg = (p) => typeof p === 'string' && /^[A-Za-z0-9_.]+$/.test(p);
+
+async function openApp(pkg) {
+  if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
+  if (!validPkg(pkg)) return { ok: false, error: 'bad package name' };
+  await runAdb(['-s', state.serial, 'shell', `monkey --pct-syskeys 0 -p ${pkg} 1`], { timeoutMs: 15000 });
+  return { ok: true };
+}
+
+async function uninstallApp(pkg) {
+  if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
+  if (!validPkg(pkg)) return { ok: false, error: 'bad package name' };
+  let r = await runAdb(['-s', state.serial, 'uninstall', pkg], { timeoutMs: 30000 });
+  if (!/Success/i.test(r.out)) {
+    // preinstalled/system app — remove for the current user instead of a full uninstall
+    r = await runAdb(['-s', state.serial, 'shell', `pm uninstall --user 0 ${pkg}`], { timeoutMs: 30000 });
+  }
+  if (/Success/i.test(r.out)) { console.log(`[shield] uninstalled ${pkg}`); return { ok: true }; }
+  return { ok: false, error: lastLine(r.err) || lastLine(r.out) || 'uninstall failed' };
+}
+
+function openSourcePage(url) {
+  if (typeof url === 'string' && /^https:\/\//.test(url)) { shell.openExternal(url); return { ok: true }; }
+  return { ok: false, error: 'bad url' };
+}
+
+// stream a user-provided URL to a local file, following redirects
+function fetchToFile(url, dest, onPct, redirects = 0) {
+  return new Promise((resolve) => {
+    if (redirects > 5) return resolve({ ok: false, error: 'too many redirects' });
+    let u;
+    try { u = new URL(url); } catch { return resolve({ ok: false, error: 'invalid URL' }); }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return resolve({ ok: false, error: 'only http(s) links' });
+    const mod = u.protocol === 'http:' ? http : https;
+    const req = mod.get(u, { headers: { 'User-Agent': 'ShieldControl' } }, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume();
+        return resolve(fetchToFile(new URL(res.headers.location, u).toString(), dest, onPct, redirects + 1));
+      }
+      if (res.statusCode !== 200) { res.resume(); return resolve({ ok: false, error: `HTTP ${res.statusCode}` }); }
+      const total = Number(res.headers['content-length']) || 0;
+      const out = fs.createWriteStream(dest);
+      let got = 0;
+      res.on('data', (d) => { got += d.length; if (total && onPct) onPct(Math.min(99, Math.floor((got / total) * 100))); });
+      res.pipe(out);
+      out.on('finish', () => out.close(() => resolve({ ok: true, bytes: got })));
+      out.on('error', (e) => resolve({ ok: false, error: String(e.message || e) }));
+    });
+    req.on('error', (e) => resolve({ ok: false, error: String(e.message || e) }));
+    req.setTimeout(60000, () => { req.destroy(); resolve({ ok: false, error: 'timed out' }); });
+  });
+}
+
+// download a direct .apk link the user supplied, then install it (progress via the queue)
+function installFromUrl(url) {
+  if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Shield is not connected' };
+  let parsed;
+  try { parsed = new URL(url); } catch { return { ok: false, error: 'Enter a valid http(s) link' }; }
+  const serial = state.serial;
+  let base = 'download.apk';
+  try { base = decodeURIComponent(parsed.pathname.split('/').pop() || '') || 'download.apk'; } catch {}
+  if (!/\.apk$/i.test(base)) base += '.apk';
+  enqueue({
+    kind: 'install',
+    name: `${base} · ${parsed.host}`,
+    run: async (report) => {
+      const tmp = path.join(app.getPath('temp'), `shieldctl-${Date.now()}.apk`);
+      const dl = await fetchToFile(url, tmp, report);
+      if (!dl.ok) { try { fs.unlinkSync(tmp); } catch {} return { ok: false, detail: `download failed: ${dl.error}` }; }
+      // an APK is a ZIP — verify the PK magic before trusting the link
+      let magic = Buffer.alloc(2);
+      try { const fd = fs.openSync(tmp, 'r'); fs.readSync(fd, magic, 0, 2, 0); fs.closeSync(fd); } catch {}
+      if (magic[0] !== 0x50 || magic[1] !== 0x4b) { try { fs.unlinkSync(tmp); } catch {} return { ok: false, detail: 'that link is not an APK' }; }
+      const r = await runAdb(['-s', serial, 'install', '-r', tmp], { timeoutMs: 300000 });
+      try { fs.unlinkSync(tmp); } catch {}
+      return /Success/i.test(r.out)
+        ? { ok: true, detail: 'Installed on Shield' }
+        : { ok: false, detail: lastLine(r.err) || lastLine(r.out) || 'install failed' };
+    },
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // scrcpy (screen control)
 // ---------------------------------------------------------------------------
 let scrcpyProc = null;
@@ -1111,6 +1237,11 @@ function registerIpc() {
   ipcMain.handle('shell:exec', (_e, { cmd, root } = {}) => runShell(cmd, !!root));
   ipcMain.handle('morphe:status', () => collectMorphe());
   ipcMain.handle('morphe:open', () => openMorphe());
+  ipcMain.handle('apps:catalog', () => collectApps());
+  ipcMain.handle('apps:open', (_e, pkg) => openApp(pkg));
+  ipcMain.handle('apps:uninstall', (_e, pkg) => uninstallApp(pkg));
+  ipcMain.handle('apps:page', (_e, url) => openSourcePage(url));
+  ipcMain.handle('apps:install-url', (_e, url) => installFromUrl(url));
   ipcMain.handle('reveal', (_e, p) => {
     if (typeof p === 'string' && p && fs.existsSync(p)) shell.showItemInFolder(p);
   });

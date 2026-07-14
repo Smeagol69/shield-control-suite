@@ -42,6 +42,13 @@ const els = {
   patchBody: $('#patchBody'),
   patchRefresh: $('#patchRefresh'),
   openMorpheBtn: $('#openMorpheBtn'),
+  storeBtn: $('#storeBtn'),
+  storeOverlay: $('#storeOverlay'),
+  storeClose: $('#storeClose'),
+  storeGrid: $('#storeGrid'),
+  storeSearch: $('#storeSearch'),
+  storeUrl: $('#storeUrl'),
+  storeUrlGo: $('#storeUrlGo'),
 };
 
 const SVG_FOLDER =
@@ -536,6 +543,149 @@ els.openMorpheBtn.addEventListener('click', async () => {
   else toast((r && r.error) || 'Could not open Morphe');
 });
 
+// ---------------- TV app store (sideload) ----------------
+let storeApps = [];
+
+const BADGE_COLORS = ['#76b900', '#e5484d', '#f5a623', '#3b82f6', '#a855f7', '#06b6d4', '#ec4899', '#14b8a6'];
+function badgeColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return BADGE_COLORS[h % BADGE_COLORS.length];
+}
+
+async function openStore() {
+  els.storeOverlay.classList.add('show');
+  els.storeGrid.replaceChildren();
+  const e = document.createElement('div');
+  e.className = 'store-empty';
+  e.textContent = 'Loading catalog…';
+  els.storeGrid.append(e);
+  await loadStore();
+  setTimeout(() => els.storeSearch.focus(), 30);
+}
+function closeStore() { els.storeOverlay.classList.remove('show'); }
+
+async function loadStore() {
+  const r = await window.shield.appsCatalog();
+  storeApps = r && r.ok ? r.apps : [];
+  renderStore();
+}
+
+function renderStore() {
+  const q = els.storeSearch.value.trim().toLowerCase();
+  const list = storeApps.filter((a) => !q || a.name.toLowerCase().includes(q) || a.pkg.includes(q));
+  els.storeGrid.replaceChildren();
+  if (!list.length) {
+    const e = document.createElement('div');
+    e.className = 'store-empty';
+    e.textContent = storeApps.length ? 'No matches' : 'Catalog unavailable';
+    els.storeGrid.append(e);
+    return;
+  }
+  let lastCat = null;
+  for (const a of list) {
+    if (a.cat !== lastCat) {
+      lastCat = a.cat;
+      const h = document.createElement('div');
+      h.className = 'store-cat';
+      h.textContent = a.cat;
+      els.storeGrid.append(h);
+    }
+    els.storeGrid.append(appCard(a));
+  }
+}
+
+function appCard(a) {
+  const card = document.createElement('div');
+  card.className = 'appcard';
+
+  const badge = document.createElement('div');
+  badge.className = 'badge';
+  badge.style.background = badgeColor(a.name);
+  badge.textContent = (a.name.replace(/[^A-Za-z0-9]/g, '').charAt(0) || '?').toUpperCase();
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const nm = document.createElement('div');
+  nm.className = 'app-name';
+  nm.textContent = a.name;
+  nm.title = a.pkg;
+  const st = document.createElement('div');
+  st.className = 'app-state' + (a.installed ? ' on' : '');
+  st.textContent = a.installed ? 'Installed' : 'Not installed';
+  meta.append(nm, st);
+
+  const actions = document.createElement('div');
+  actions.className = 'app-actions';
+  if (a.installed) {
+    const open = document.createElement('button');
+    open.textContent = 'Open';
+    open.addEventListener('click', async () => {
+      const r = await window.shield.appsOpen(a.pkg);
+      if (r && r.ok) toast(`Launching ${a.name}…`, 'info');
+      else toast((r && r.error) || 'Could not open');
+    });
+    actions.append(open, makeUninstallButton(a));
+  } else {
+    const get = document.createElement('button');
+    get.className = 'get';
+    get.textContent = 'Get APK';
+    get.addEventListener('click', () => {
+      window.shield.appsPage(a.source);
+      toast(`Opening APKMirror for ${a.name} — download the Android TV APK, then drop it here`, 'info');
+    });
+    actions.append(get);
+  }
+  card.append(badge, meta, actions);
+  return card;
+}
+
+function makeUninstallButton(a) {
+  const btn = document.createElement('button');
+  btn.className = 'rm';
+  btn.title = `Uninstall ${a.name}`;
+  btn.innerHTML = SVG_TRASH;
+  let armed = null;
+  const disarm = () => {
+    clearTimeout(armed);
+    armed = null;
+    btn.classList.remove('armed');
+    btn.innerHTML = SVG_TRASH;
+    btn.title = `Uninstall ${a.name}`;
+  };
+  btn.addEventListener('click', async () => {
+    if (!armed) {
+      btn.classList.add('armed');
+      btn.innerHTML = SVG_CONFIRM;
+      btn.title = `Click again to uninstall ${a.name}`;
+      armed = setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    btn.disabled = true;
+    const r = await window.shield.appsUninstall(a.pkg);
+    if (r && r.ok) { toast(`Uninstalled ${a.name}`, 'info'); loadStore(); }
+    else { btn.disabled = false; toast((r && r.error) || 'Uninstall failed'); }
+  });
+  return btn;
+}
+
+function submitStoreUrl() {
+  const url = els.storeUrl.value.trim();
+  if (!url) return;
+  window.shield.appsInstallUrl(url).then((r) => {
+    if (r && r.ok) { toast('Downloading & installing…', 'info'); els.storeUrl.value = ''; closeStore(); }
+    else toast((r && r.error) || 'Could not start install');
+  });
+}
+
+els.storeBtn.addEventListener('click', openStore);
+els.storeClose.addEventListener('click', closeStore);
+els.storeOverlay.addEventListener('click', (e) => { if (e.target === els.storeOverlay) closeStore(); });
+els.storeSearch.addEventListener('input', renderStore);
+els.storeUrlGo.addEventListener('click', submitStoreUrl);
+els.storeUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitStoreUrl(); } });
+
 // ---------------- file browser ----------------
 let pendingDir = null;
 async function refresh(dir) {
@@ -772,6 +922,7 @@ window.addEventListener('keydown', (e) => {
     hideVeil();
     els.logOverlay.classList.remove('show');
     els.consoleOverlay.classList.remove('show');
+    els.storeOverlay.classList.remove('show');
   }
 });
 
@@ -828,6 +979,7 @@ window.shield.onTransfer((t) => {
   renderTransfers();
   if (t.status === 'done') {
     if (t.kind === 'push') scheduleBrowserRefresh();
+    if (t.kind === 'install' && els.storeOverlay.classList.contains('show')) loadStore();
     setTimeout(() => {
       if (transfers.get(t.id) === t) {
         transfers.delete(t.id);

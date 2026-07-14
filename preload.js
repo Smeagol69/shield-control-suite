@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('shield', {
   execShell: (cmd, root) => ipcRenderer.invoke('shell:exec', { cmd, root }),
   morpheStatus: () => ipcRenderer.invoke('morphe:status'),
   morpheOpen: () => ipcRenderer.invoke('morphe:open'),
+  appsCatalog: () => ipcRenderer.invoke('apps:catalog'),
+  appsOpen: (pkg) => ipcRenderer.invoke('apps:open', pkg),
+  appsUninstall: (pkg) => ipcRenderer.invoke('apps:uninstall', pkg),
+  appsPage: (url) => ipcRenderer.invoke('apps:page', url),
+  appsInstallUrl: (url) => ipcRenderer.invoke('apps:install-url', url),
   reveal: (p) => ipcRenderer.invoke('reveal', p),
 
   // dropped DOM File -> absolute Windows path (File.path was removed in Electron 32+)
