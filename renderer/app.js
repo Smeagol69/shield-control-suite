@@ -49,6 +49,19 @@ const els = {
   storeSearch: $('#storeSearch'),
   storeUrl: $('#storeUrl'),
   storeUrlGo: $('#storeUrlGo'),
+  remoteBtn: $('#remoteBtn'),
+  remoteOverlay: $('#remoteOverlay'),
+  remoteClose: $('#remoteClose'),
+  remoteText: $('#remoteText'),
+  remoteSend: $('#remoteSend'),
+  mgrBtn: $('#mgrBtn'),
+  mgrOverlay: $('#mgrOverlay'),
+  mgrClose: $('#mgrClose'),
+  mgrSearch: $('#mgrSearch'),
+  mgrSystem: $('#mgrSystem'),
+  mgrTrim: $('#mgrTrim'),
+  mgrList: $('#mgrList'),
+  mgrCount: $('#mgrCount'),
 };
 
 const SVG_FOLDER =
@@ -923,7 +936,171 @@ window.addEventListener('keydown', (e) => {
     els.logOverlay.classList.remove('show');
     els.consoleOverlay.classList.remove('show');
     els.storeOverlay.classList.remove('show');
+    els.mgrOverlay.classList.remove('show');
+    closeRemote();
   }
+});
+
+// ---------------- virtual remote ----------------
+// while the remote is open, physical arrow/enter/back/media keys drive the Shield
+const KEY_MAP = {
+  ArrowUp: 19, ArrowDown: 20, ArrowLeft: 21, ArrowRight: 22,
+  Enter: 23, ' ': 23, Backspace: 4, Escape: null, Home: 3,
+  MediaPlayPause: 85, MediaTrackNext: 87, MediaTrackPrevious: 88,
+};
+let remoteOpen = false;
+
+function openRemote() {
+  els.remoteOverlay.classList.add('show');
+  remoteOpen = true;
+}
+function closeRemote() {
+  els.remoteOverlay.classList.remove('show');
+  remoteOpen = false;
+}
+
+async function fireKey(code) {
+  const r = await window.shield.inputKey(code);
+  if (r && !r.ok && r.error) toast(r.error);
+}
+
+els.remoteBtn.addEventListener('click', openRemote);
+els.remoteClose.addEventListener('click', closeRemote);
+els.remoteOverlay.addEventListener('click', (e) => { if (e.target === els.remoteOverlay) closeRemote(); });
+
+// delegate all D-pad / media / volume buttons (they carry data-key)
+els.remoteOverlay.querySelectorAll('.rbtn[data-key]').forEach((btn) => {
+  btn.addEventListener('click', () => fireKey(Number(btn.dataset.key)));
+});
+
+function sendRemoteText() {
+  const t = els.remoteText.value;
+  if (!t) return;
+  window.shield.inputText(t).then((r) => {
+    if (r && r.ok) els.remoteText.value = '';
+    else if (r && r.error) toast(r.error);
+  });
+}
+els.remoteSend.addEventListener('click', sendRemoteText);
+els.remoteText.addEventListener('keydown', (e) => {
+  // let the text box behave normally; Enter sends the typed text
+  e.stopPropagation();
+  if (e.key === 'Enter') { e.preventDefault(); sendRemoteText(); }
+});
+
+// physical-key passthrough when the remote panel is open (but not while typing in it)
+window.addEventListener('keydown', (e) => {
+  if (!remoteOpen) return;
+  if (document.activeElement === els.remoteText) return;
+  if (e.key === 'Escape') return; // Escape closes (handled above)
+  if (Object.prototype.hasOwnProperty.call(KEY_MAP, e.key) && KEY_MAP[e.key] != null) {
+    e.preventDefault();
+    fireKey(KEY_MAP[e.key]);
+  }
+});
+
+// ---------------- app manager ----------------
+let mgrApps = [];
+
+async function openMgr() {
+  els.mgrOverlay.classList.add('show');
+  els.mgrList.replaceChildren();
+  const e = document.createElement('div');
+  e.className = 'store-empty';
+  e.textContent = state.status === 'connected' ? 'Loading apps…' : 'Connect the Shield first';
+  els.mgrList.append(e);
+  await loadMgr();
+  setTimeout(() => els.mgrSearch.focus(), 30);
+}
+function closeMgr() { els.mgrOverlay.classList.remove('show'); }
+
+async function loadMgr() {
+  const r = await window.shield.appsList(els.mgrSystem.checked);
+  mgrApps = r && r.ok ? r.apps : [];
+  els.mgrCount.textContent = r && r.ok ? `· ${r.count}` : '';
+  renderMgr();
+}
+
+function renderMgr() {
+  const q = els.mgrSearch.value.trim().toLowerCase();
+  const list = mgrApps.filter((a) => !q || a.name.toLowerCase().includes(q) || a.pkg.includes(q));
+  els.mgrList.replaceChildren();
+  if (!list.length) {
+    const e = document.createElement('div');
+    e.className = 'store-empty';
+    e.textContent = mgrApps.length ? 'No matches' : 'No apps';
+    els.mgrList.append(e);
+    return;
+  }
+  for (const a of list) els.mgrList.append(mgrRow(a));
+}
+
+function mgrRow(a) {
+  const row = document.createElement('div');
+  row.className = 'mgr-row';
+
+  const meta = document.createElement('div');
+  meta.className = 'mgr-meta';
+  const nm = document.createElement('div');
+  nm.className = 'mgr-name';
+  nm.textContent = a.name;
+  const pk = document.createElement('div');
+  pk.className = 'mgr-pkg';
+  pk.textContent = a.pkg;
+  meta.append(nm, pk);
+
+  const actions = document.createElement('div');
+  actions.className = 'mgr-actions';
+  const mk = (label, title, fn, cls) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.title = title;
+    if (cls) b.classList.add(cls);
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      const r = await fn();
+      b.disabled = false;
+      if (r && r.ok) toast(`${label}: ${a.name}`, 'info');
+      else toast((r && r.error) || `${label} failed`);
+    });
+    return b;
+  };
+  actions.append(
+    mk('Open', 'Launch', () => window.shield.appsOpen(a.pkg)),
+    mk('Stop', 'Force-stop', () => window.shield.appsManage(a.pkg, 'stop')),
+    mk('Cache', 'Clear cache (keeps logins)', () => window.shield.appsManage(a.pkg, 'clear-cache')),
+  );
+  // uninstall is two-click armed, reusing the store's trash pattern
+  const un = document.createElement('button');
+  un.className = 'mgr-un';
+  un.innerHTML = SVG_TRASH;
+  un.title = `Uninstall ${a.name}`;
+  let armed = null;
+  const disarm = () => { clearTimeout(armed); armed = null; un.classList.remove('armed'); un.innerHTML = SVG_TRASH; };
+  un.addEventListener('click', async () => {
+    if (!armed) { un.classList.add('armed'); un.innerHTML = SVG_CONFIRM; armed = setTimeout(disarm, 3000); return; }
+    disarm();
+    un.disabled = true;
+    const r = await window.shield.appsUninstall(a.pkg);
+    if (r && r.ok) { toast(`Uninstalled ${a.name}`, 'info'); loadMgr(); }
+    else { un.disabled = false; toast((r && r.error) || 'Uninstall failed'); }
+  });
+  actions.append(un);
+
+  row.append(meta, actions);
+  return row;
+}
+
+els.mgrBtn.addEventListener('click', openMgr);
+els.mgrClose.addEventListener('click', closeMgr);
+els.mgrOverlay.addEventListener('click', (e) => { if (e.target === els.mgrOverlay) closeMgr(); });
+els.mgrSearch.addEventListener('input', renderMgr);
+els.mgrSystem.addEventListener('change', loadMgr);
+els.mgrTrim.addEventListener('click', async () => {
+  els.mgrTrim.disabled = true;
+  const r = await window.shield.appsTrim();
+  els.mgrTrim.disabled = false;
+  toast(r && r.ok ? 'Cleared every app cache' : (r && r.error) || 'Failed', r && r.ok ? 'info' : 'error');
 });
 
 function dropPaths(e) {

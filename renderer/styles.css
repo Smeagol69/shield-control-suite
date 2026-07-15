@@ -671,6 +671,95 @@ body:not([data-status="connected"]) .browser { opacity: 0.55; }
 .appcard .app-actions .rm:hover { color: var(--red); border-color: rgba(229, 72, 77, 0.5); background: var(--red-soft); }
 .appcard .app-actions .rm.armed { color: var(--red); border-color: var(--red); background: var(--red-soft); }
 
+/* ---------------- virtual remote ---------------- */
+.remote-panel { width: min(360px, 92vw); }
+.remote-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.remote-top, .remote-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 58px);
+  grid-template-rows: repeat(3, 58px);
+  gap: 6px;
+  margin: 4px 0;
+}
+.dpad .up { grid-column: 2; grid-row: 1; }
+.dpad .left { grid-column: 1; grid-row: 2; }
+.dpad .ok { grid-column: 2; grid-row: 2; }
+.dpad .right { grid-column: 3; grid-row: 2; }
+.dpad .down { grid-column: 2; grid-row: 3; }
+.rbtn {
+  min-width: 44px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.1s, background 0.1s, transform 0.05s;
+}
+.rbtn:hover { border-color: var(--green); color: var(--green); }
+.rbtn:active { transform: scale(0.94); background: var(--green-soft); }
+.rbtn.txt { font-size: 12px; font-weight: 600; }
+.dpad .rbtn { width: 58px; height: 58px; font-size: 18px; }
+.dpad .ok { background: var(--green); color: #10130a; border-color: var(--green); font-size: 14px; font-weight: 700; }
+.dpad .ok:hover { filter: brightness(1.1); color: #10130a; }
+.remote-text { display: flex; gap: 8px; width: 100%; margin-top: 4px; }
+.remote-text input {
+  flex: 1; min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.remote-text input:focus { border-color: rgba(118, 185, 0, 0.55); }
+.remote-text .ghost { flex: none; padding: 8px 14px; }
+.remote-hint { color: var(--faint); font-size: 11px; text-align: center; line-height: 1.5; }
+
+/* ---------------- app manager ---------------- */
+.mgr-panel { width: min(760px, 94vw); }
+.mgr-bar { display: flex; gap: 8px; align-items: center; padding: 12px 16px 8px; }
+.mgr-bar .store-search { flex: 1; margin: 0; }
+.mgr-sys {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11.5px; color: var(--muted); cursor: pointer; user-select: none; flex: none;
+}
+.mgr-sys input { accent-color: var(--green); }
+.mgr-bar .ghost { flex: none; padding: 8px 12px; }
+.mgr-list { overflow-y: auto; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
+.mgr-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+.mgr-meta { flex: 1; min-width: 0; }
+.mgr-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mgr-pkg { font-size: 11px; color: var(--faint); font-family: Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mgr-actions { display: flex; gap: 4px; flex: none; }
+.mgr-actions button {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 9px;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.mgr-actions button:hover:not(:disabled) { border-color: var(--faint); color: var(--text); }
+.mgr-actions button:disabled { opacity: 0.5; }
+.mgr-un { width: 30px; display: flex; align-items: center; justify-content: center; padding: 5px 0 !important; }
+.mgr-un:hover:not(:disabled) { color: var(--red) !important; border-color: rgba(229, 72, 77, 0.5) !important; background: var(--red-soft) !important; }
+.mgr-un.armed { color: var(--red) !important; border-color: var(--red) !important; background: var(--red-soft) !important; }
+
 /* ---------------- drop veil ---------------- */
 .veil {
   position: fixed;

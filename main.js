@@ -33,6 +33,7 @@ const DEFAULTS = {
   kodiDropDir: '/sdcard/Download/KodiDrop',
   pullDir: null,                          // null → this PC's Downloads folder
   backupDir: '/sdcard/backup',            // scanned for "last backup" status
+  scrcpyBitrate: '8M',                    // lower = lower latency over WiFi (e.g. '4M'); higher = sharper
   bounds: null,
 };
 let config = { ...DEFAULTS };
@@ -158,9 +159,9 @@ function setState(patch) {
         (state.detail ? ` — ${state.detail}` : '')
     );
     if (win && !win.isDestroyed()) win.webContents.send('shield:state', { ...state });
-    if (state.status !== 'connected' && status.online) {
-      status.online = false;
-      pushStatus();
+    if (state.status !== 'connected') {
+      killRemoteShell(); // its serial may be stale; next keypress reopens against the live one
+      if (status.online) { status.online = false; pushStatus(); }
     }
   }
 }
@@ -785,6 +786,54 @@ function installFromUrl(url) {
 }
 
 // ---------------------------------------------------------------------------
+// App manager — every installed app (superset of the curated store) with
+// launch / force-stop / clear-cache / uninstall.
+// ---------------------------------------------------------------------------
+async function listInstalledApps(includeSystem) {
+  const serial = requireDevice();
+  if (!serial) return { ok: false, error: 'Not connected' };
+  const args = ['-s', serial, 'shell', includeSystem ? 'pm list packages' : 'pm list packages -3'];
+  const r = await runAdb(args, { timeoutMs: 20000 });
+  const catalog = new Set(TV_APPS.map((a) => a.pkg));
+  const apps = r.out.split(/\r?\n/)
+    .map((l) => l.trim().replace(/^package:/, ''))
+    .filter(Boolean)
+    .map((pkg) => ({ pkg, name: appName(pkg), known: APP_NAMES[pkg] != null || catalog.has(pkg) }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  return { ok: true, count: apps.length, apps };
+}
+
+async function appManage(pkg, action) {
+  const serial = requireDevice();
+  if (!serial) return { ok: false, error: 'Not connected' };
+  if (!validPkg(pkg)) return { ok: false, error: 'bad package name' };
+  if (action === 'stop') {
+    const r = await runAdb(['-s', serial, 'shell', `am force-stop ${pkg}`], { timeoutMs: 15000 });
+    return r.ok ? { ok: true } : { ok: false, error: lastLine(r.err) || 'force-stop failed' };
+  }
+  if (action === 'clear-cache') {
+    // deliberately NOT `pm clear` (that wipes logins/data) — only remove cache dirs, via root
+    if (rootAvailable === null) await checkRoot();
+    if (!rootAvailable) return { ok: false, error: 'clearing cache needs root' };
+    const inner =
+      `rm -rf /data/data/${pkg}/cache/* /data/data/${pkg}/code_cache/* 2>/dev/null; ` +
+      `rm -rf /data/media/0/Android/data/${pkg}/cache/* 2>/dev/null; echo cleared`;
+    const r = await runAdb(['-s', serial, 'shell', `su -c ${shq(inner)}`], { timeoutMs: 20000 });
+    return /cleared/.test(r.out) ? { ok: true } : { ok: false, error: lastLine(r.err) || 'clear-cache failed' };
+  }
+  return { ok: false, error: 'unknown action' };
+}
+
+async function trimCaches() {
+  const serial = requireDevice();
+  if (!serial) return { ok: false, error: 'Not connected' };
+  // ask the framework to purge every app's cache to reclaim space
+  await runAdb(['-s', serial, 'shell', 'pm trim-caches 999999999999'], { timeoutMs: 30000 });
+  setTimeout(collectFast, 1500);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // scrcpy (screen control)
 // ---------------------------------------------------------------------------
 let scrcpyProc = null;
@@ -803,8 +852,10 @@ function launchScrcpy() {
   const title = `${state.model || 'NVIDIA Shield'} — Shield Control`;
   const child = spawn(
     SCRCPY_EXE,
-    // aac: the Shield (Android 11) has no Opus encoder, and that failure kills the stream
-    ['-s', state.serial, '--window-title', title, '--stay-awake', '--audio-codec=aac'],
+    // aac: the Shield (Android 11) has no Opus encoder, and that failure kills the stream.
+    // max-fps + tunable bitrate + zero display buffer keeps mirrored control responsive over WiFi.
+    ['-s', state.serial, '--window-title', title, '--stay-awake', '--audio-codec=aac',
+     '--max-fps=60', `--video-bit-rate=${config.scrcpyBitrate || '8M'}`, '--display-buffer=0'],
     {
       cwd: SCRCPY_DIR,
       env: { ...process.env, ADB: ADB_EXE }, // make scrcpy use our adb → one adb server
@@ -842,6 +893,65 @@ function launchScrcpy() {
 function stopScrcpy() {
   try { if (scrcpyProc) scrcpyProc.kill(); } catch {}
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Device input — virtual remote. Keypresses route through ONE persistent
+// `adb shell` so each press is just a stdin write (no ~100ms process spawn per
+// key), which is what makes the remote feel responsive.
+// ---------------------------------------------------------------------------
+const requireDevice = () => (state.status === 'connected' && state.serial ? state.serial : null);
+
+let remoteShell = null;
+let remoteShellSerial = null;
+
+function killRemoteShell() {
+  if (remoteShell) {
+    try { remoteShell.stdin.end(); remoteShell.kill(); } catch {}
+    remoteShell = null;
+  }
+  remoteShellSerial = null;
+}
+
+function ensureRemoteShell() {
+  const serial = requireDevice();
+  if (!serial) return null;
+  if (remoteShell && remoteShellSerial === serial && remoteShell.stdin && remoteShell.stdin.writable) {
+    return remoteShell;
+  }
+  killRemoteShell();
+  remoteShellSerial = serial;
+  const sh = spawn(ADB_EXE, ['-s', serial, 'shell'], { windowsHide: true });
+  sh.stdout.on('data', () => {}); // drain both pipes so the shell never blocks on a full buffer
+  sh.stderr.on('data', () => {});
+  sh.on('error', () => { if (remoteShell === sh) remoteShell = null; });
+  sh.on('close', () => { if (remoteShell === sh) remoteShell = null; });
+  remoteShell = sh;
+  return sh;
+}
+
+// only these keycodes may be sent — never forward an arbitrary string to the shell
+const ALLOWED_KEYS = new Set([
+  3, 4, 19, 20, 21, 22, 23, 24, 25, 26, 66, 67, 82, 84, 85, 86, 87, 88, 89, 90, 164, 187,
+]);
+
+function sendKey(code) {
+  const n = Number(code);
+  if (!ALLOWED_KEYS.has(n)) return { ok: false, error: 'key not allowed' };
+  const sh = ensureRemoteShell();
+  if (!sh) return { ok: false, error: 'Not connected' };
+  try { sh.stdin.write(`input keyevent ${n}\n`); return { ok: true }; }
+  catch { killRemoteShell(); return { ok: false, error: 'remote link dropped — try again' }; }
+}
+
+async function sendText(text) {
+  const serial = requireDevice();
+  if (!serial) return { ok: false, error: 'Not connected' };
+  if (typeof text !== 'string' || !text) return { ok: false, error: 'no text' };
+  // `input text` maps %s to space; single-quote so the device shell passes it verbatim
+  const esc = text.replace(/'/g, `'\\''`).replace(/ /g, '%s');
+  const r = await runAdb(['-s', serial, 'shell', `input text '${esc}'`], { timeoutMs: 10000 });
+  return r.ok ? { ok: true } : { ok: false, error: lastLine(r.err) || 'input failed' };
 }
 
 // ---------------------------------------------------------------------------
@@ -946,6 +1056,91 @@ function enqueueInstall(localPath, serial) {
       return /Success/i.test(r.out)
         ? { ok: true, detail: 'Installed on Shield' }
         : { ok: false, detail: lastLine(r.err) || lastLine(r.out) || 'install failed' };
+    },
+  });
+}
+
+// Split/bundle APKs (.apkm/.apks/.xapk are ZIP containers of base + config splits)
+// must go in via a single install-multiple session, not `install`. Merging them into
+// one APK breaks the signature — the mistake that made the manual Disney+ attempt fail.
+const BUNDLE_EXTS = new Set(['.apkm', '.apks', '.xapk']);
+const isBundle = (p) => BUNDLE_EXTS.has(path.extname(p).toLowerCase());
+const isApkLike = (p) => p.toLowerCase().endsWith('.apk') || isBundle(p);
+
+let deviceAbiCache = null;
+async function deviceAbi(serial) {
+  if (deviceAbiCache) return deviceAbiCache;
+  const r = await runAdb(['-s', serial, 'shell', 'getprop ro.product.cpu.abi'], { timeoutMs: 8000 });
+  deviceAbiCache = ((r.out || '').trim() || 'arm64-v8a').replace(/-/g, '_'); // arm64-v8a → arm64_v8a
+  return deviceAbiCache;
+}
+
+const ARCH_TOKENS = ['arm64_v8a', 'armeabi_v7a', 'armeabi', 'x86_64', 'x86', 'mips64', 'mips'];
+// arch fallbacks: an arm64 device also runs 32-bit, so keep the best *compatible*
+// arch split present (don't drop an armv7a-only bundle just because it isn't arm64)
+const ABI_COMPAT = {
+  arm64_v8a: ['arm64_v8a', 'armeabi_v7a', 'armeabi'],
+  armeabi_v7a: ['armeabi_v7a', 'armeabi'],
+  armeabi: ['armeabi'],
+  x86_64: ['x86_64', 'x86', 'arm64_v8a', 'armeabi_v7a', 'armeabi'],
+  x86: ['x86', 'armeabi_v7a', 'armeabi'],
+};
+const archOf = (base) => ARCH_TOKENS.find((t) => base.includes('config.' + t) || base.includes('.' + t + '.apk'));
+
+// keep base + all language/density splits + the single best-compatible arch split
+function pickSplits(apkFiles, abi) {
+  const present = new Set();
+  for (const f of apkFiles) { const t = archOf(path.basename(f).toLowerCase()); if (t) present.add(t); }
+  const order = ABI_COMPAT[abi] || [abi];
+  const chosen = order.find((a) => present.has(a)) || null; // null → no arch splits (base carries libs)
+  return apkFiles.filter((f) => {
+    const t = archOf(path.basename(f).toLowerCase());
+    return !t || t === chosen; // base/lang/dpi always kept; among arch splits keep only the chosen one
+  });
+}
+
+function extractBundle(bundlePath, outDir) {
+  return new Promise((resolve) => {
+    try { fs.mkdirSync(outDir, { recursive: true }); } catch {}
+    // Windows' bundled tar (bsdtar/libarchive) reads ZIP containers directly
+    execFile('tar', ['-xf', bundlePath, '-C', outDir], { windowsHide: true, timeout: 180000 }, (err) => {
+      if (err) return resolve({ ok: false, error: 'could not unpack bundle (tar)' });
+      const apks = [];
+      const walk = (d) => {
+        let entries = [];
+        try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          const full = path.join(d, e.name);
+          if (e.isDirectory()) walk(full);
+          else if (e.name.toLowerCase().endsWith('.apk')) apks.push(full);
+        }
+      };
+      walk(outDir);
+      resolve(apks.length ? { ok: true, apks } : { ok: false, error: 'no APKs inside bundle' });
+    });
+  });
+}
+
+function enqueueBundleInstall(bundlePath, serial) {
+  enqueue({
+    kind: 'install',
+    name: path.basename(bundlePath),
+    indeterminate: true,
+    run: async () => {
+      const outDir = path.join(app.getPath('temp'), `shieldctl-bundle-${Date.now()}`);
+      try {
+        const ex = await extractBundle(bundlePath, outDir);
+        if (!ex.ok) return { ok: false, detail: ex.error };
+        const abi = await deviceAbi(serial);
+        const splits = pickSplits(ex.apks, abi);
+        if (!splits.length) return { ok: false, detail: 'no installable splits for ' + abi };
+        const r = await runAdb(['-s', serial, 'install-multiple', '-r', ...splits], { timeoutMs: 600000 });
+        return /Success/i.test(r.out)
+          ? { ok: true, detail: `Installed — ${splits.length} splits (${abi})` }
+          : { ok: false, detail: lastLine(r.err) || lastLine(r.out) || 'install failed' };
+      } finally {
+        try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
+      }
     },
   });
 }
@@ -1167,6 +1362,7 @@ function registerIpc() {
   ipcMain.handle('shield:get-state', () => ({ ...state }));
   ipcMain.handle('shield:reconnect', () => {
     propsCache.clear();
+    deviceAbiCache = null; // re-probe arch in case a different device/transport settles
     connectFlow('manual');
     return true;
   });
@@ -1224,11 +1420,12 @@ function registerIpc() {
     const files = (Array.isArray(paths) ? paths : [])
       .filter((p) => typeof p === 'string' && p && fs.existsSync(p));
     if (!files.length) return { ok: false, error: 'Nothing to send' };
-    if (files.some((p) => !p.toLowerCase().endsWith('.apk'))) {
+    if (files.some((p) => !isApkLike(p))) {
       await runAdb(['-s', serial, 'shell', `mkdir -p ${shq(dir)}`]);
     }
     for (const p of files) {
-      if (p.toLowerCase().endsWith('.apk')) enqueueInstall(p, serial);
+      if (isBundle(p)) enqueueBundleInstall(p, serial);
+      else if (p.toLowerCase().endsWith('.apk')) enqueueInstall(p, serial);
       else enqueuePush(p, dir, serial);
     }
     return { ok: true, queued: files.length, dir };
@@ -1242,6 +1439,11 @@ function registerIpc() {
   ipcMain.handle('apps:uninstall', (_e, pkg) => uninstallApp(pkg));
   ipcMain.handle('apps:page', (_e, url) => openSourcePage(url));
   ipcMain.handle('apps:install-url', (_e, url) => installFromUrl(url));
+  ipcMain.handle('apps:list', (_e, includeSystem) => listInstalledApps(!!includeSystem));
+  ipcMain.handle('apps:manage', (_e, { pkg, action } = {}) => appManage(pkg, action));
+  ipcMain.handle('apps:trim', () => trimCaches());
+  ipcMain.handle('input:key', (_e, code) => sendKey(code));
+  ipcMain.handle('input:text', (_e, text) => sendText(text));
   ipcMain.handle('reveal', (_e, p) => {
     if (typeof p === 'string' && p && fs.existsSync(p)) shell.showItemInFolder(p);
   });
@@ -1327,6 +1529,7 @@ if (!gotLock) {
   app.on('will-quit', () => {
     quitting = true;
     flushConfigSync();
+    killRemoteShell();
     try { if (trackProc) trackProc.kill(); } catch {}
     try { if (scrcpyProc) scrcpyProc.kill(); } catch {}
     // leave no orphan adb.exe behind — reconnect on next launch takes ~1s

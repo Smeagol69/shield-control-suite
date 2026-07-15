@@ -20,6 +20,12 @@
     </div>
 
     <div class="header-right">
+      <button id="remoteBtn" class="ghost icon-btn" title="Virtual remote">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="7" y="2" width="10" height="20" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="7" r="1.5" fill="currentColor"/><path d="M10 12h4M10 15h4M10 18h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <button id="mgrBtn" class="ghost icon-btn" title="App manager">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      </button>
       <button id="storeBtn" class="ghost icon-btn" title="TV App Store (sideload)">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 7h16l-1 3.5a3 3 0 0 1-2.9 2.2H7.9A3 3 0 0 1 5 10.5L4 7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 7l1.2-3h13.6L20 7M6 13v6a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
@@ -202,6 +208,63 @@ Enable “root” to run through Magisk su.</pre>
       </div>
       <input type="text" id="storeSearch" class="store-search" placeholder="Search apps…" spellcheck="false" autocomplete="off" />
       <div class="store-grid" id="storeGrid"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="remoteOverlay">
+    <div class="overlay-panel remote-panel">
+      <div class="overlay-head">
+        <b>Remote</b>
+        <button id="remoteClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <div class="remote-body">
+        <div class="remote-top">
+          <button class="rbtn" data-key="26" title="Power">⏻</button>
+          <button class="rbtn" data-key="187" title="Recent apps">▢</button>
+          <button class="rbtn" data-key="3" title="Home">⌂</button>
+          <button class="rbtn" data-key="4" title="Back">↩</button>
+        </div>
+        <div class="dpad">
+          <button class="rbtn up" data-key="19" title="Up">▲</button>
+          <button class="rbtn left" data-key="21" title="Left">◀</button>
+          <button class="rbtn ok" data-key="23" title="Select">OK</button>
+          <button class="rbtn right" data-key="22" title="Right">▶</button>
+          <button class="rbtn down" data-key="20" title="Down">▼</button>
+        </div>
+        <div class="remote-row media">
+          <button class="rbtn" data-key="88" title="Previous">⏮</button>
+          <button class="rbtn" data-key="89" title="Rewind">⏪</button>
+          <button class="rbtn" data-key="85" title="Play / Pause">⏯</button>
+          <button class="rbtn" data-key="90" title="Fast-forward">⏩</button>
+          <button class="rbtn" data-key="87" title="Next">⏭</button>
+        </div>
+        <div class="remote-row vol">
+          <button class="rbtn txt" data-key="25" title="Volume down">VOL −</button>
+          <button class="rbtn txt" data-key="164" title="Mute">MUTE</button>
+          <button class="rbtn txt" data-key="24" title="Volume up">VOL +</button>
+          <button class="rbtn" data-key="82" title="Menu">☰</button>
+        </div>
+        <div class="remote-text">
+          <input type="text" id="remoteText" placeholder="Type into the Shield…" spellcheck="false" autocomplete="off" />
+          <button id="remoteSend" class="ghost">Send</button>
+        </div>
+        <div class="remote-hint">Arrow keys move · Enter selects · Backspace goes back — while this panel is open.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="mgrOverlay">
+    <div class="overlay-panel mgr-panel">
+      <div class="overlay-head">
+        <b>App Manager <span id="mgrCount" class="store-sub"></span></b>
+        <button id="mgrClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <div class="mgr-bar">
+        <input type="text" id="mgrSearch" class="store-search" placeholder="Search installed apps…" spellcheck="false" autocomplete="off" />
+        <label class="mgr-sys" title="Include system apps"><input type="checkbox" id="mgrSystem" /> system</label>
+        <button id="mgrTrim" class="ghost" title="Reclaim space by clearing every app's cache">Free space</button>
+      </div>
+      <div class="mgr-list" id="mgrList"></div>
     </div>
   </div>
 

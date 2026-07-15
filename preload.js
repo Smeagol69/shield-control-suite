@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('shield', {
   appsUninstall: (pkg) => ipcRenderer.invoke('apps:uninstall', pkg),
   appsPage: (url) => ipcRenderer.invoke('apps:page', url),
   appsInstallUrl: (url) => ipcRenderer.invoke('apps:install-url', url),
+  appsList: (includeSystem) => ipcRenderer.invoke('apps:list', includeSystem),
+  appsManage: (pkg, action) => ipcRenderer.invoke('apps:manage', { pkg, action }),
+  appsTrim: () => ipcRenderer.invoke('apps:trim'),
+  inputKey: (code) => ipcRenderer.invoke('input:key', code),
+  inputText: (text) => ipcRenderer.invoke('input:text', text),
   reveal: (p) => ipcRenderer.invoke('reveal', p),
 
   // dropped DOM File -> absolute Windows path (File.path was removed in Electron 32+)
