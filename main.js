@@ -853,9 +853,10 @@ function launchScrcpy() {
   const child = spawn(
     SCRCPY_EXE,
     // aac: the Shield (Android 11) has no Opus encoder, and that failure kills the stream.
-    // max-fps + tunable bitrate + zero display buffer keeps mirrored control responsive over WiFi.
+    // max-fps + tunable bitrate keep mirrored control responsive over WiFi (scrcpy's
+    // video buffer already defaults to 0, so no buffering flag is needed).
     ['-s', state.serial, '--window-title', title, '--stay-awake', '--audio-codec=aac',
-     '--max-fps=60', `--video-bit-rate=${config.scrcpyBitrate || '8M'}`, '--display-buffer=0'],
+     '--max-fps=60', `--video-bit-rate=${config.scrcpyBitrate || '8M'}`],
     {
       cwd: SCRCPY_DIR,
       env: { ...process.env, ADB: ADB_EXE }, // make scrcpy use our adb → one adb server
