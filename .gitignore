@@ -3,3 +3,4 @@ build/
 *.keystore
 marquee.apk
 *.zip
+*.idsig
