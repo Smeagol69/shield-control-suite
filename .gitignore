@@ -1,0 +1,5 @@
+tools/
+build/
+*.keystore
+marquee.apk
+*.zip
