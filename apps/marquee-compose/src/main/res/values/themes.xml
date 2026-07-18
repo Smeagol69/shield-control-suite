@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.Marquee" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:navigationBarColor">#08090C</item>
+        <item name="android:colorAccent">#FFCE55</item>
+    </style>
+</resources>

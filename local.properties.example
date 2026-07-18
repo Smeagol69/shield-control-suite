@@ -1,0 +1,14 @@
+# Android SDK used by Gradle.
+sdk.dir=C\:\\Users\\you\\AppData\\Local\\Android\\Sdk
+
+# Optional: preserve the existing Marquee application identity across upgrades.
+marquee.keystore=C\:\\path\\to\\marquee.keystore
+marquee.storePassword=CHANGE_ME
+marquee.keyAlias=marquee
+marquee.keyPassword=CHANGE_ME
+
+# Optional: replace Shield Hooks' local debug-signing fallback for release builds.
+shieldHooks.keystore=C\:\\path\\to\\shield-hooks.keystore
+shieldHooks.storePassword=CHANGE_ME
+shieldHooks.keyAlias=shield-hooks
+shieldHooks.keyPassword=CHANGE_ME

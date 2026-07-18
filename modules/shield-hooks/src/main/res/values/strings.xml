@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Shield Hooks</string>
+    <string name="app_description">Package-scoped event hooks and sandboxed BeanShell automation</string>
+</resources>

@@ -17,12 +17,16 @@ Thumbs.db
 # Android/Gradle
 **/.gradle/
 **/build/
+!apps/shield-control/build/
+!apps/shield-control/build/**
 **/captures/
 **/*.apk
 **/*.aab
 **/*.apks
 **/*.idsig
 **/tools/
+!apps/shield-control/tools/
+!apps/shield-control/tools/**
 **/android-sdk/
 **/jdk-*/
 
@@ -34,7 +38,6 @@ Thumbs.db
 # Runtime artifacts
 **/*.log
 **/*.pid
-**/data/
 **/tmp/
 **/.env
 **/.env.*
