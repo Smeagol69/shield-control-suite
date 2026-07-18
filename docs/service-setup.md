@@ -59,3 +59,11 @@ TVmaze's public schedule API needs no account or key. Marquee requests the
 current web/streaming schedule, ranks major services first, and resolves each
 show to TMDB metadata. Settings includes a TVmaze attribution link as required
 by its CC BY-SA API license.
+
+## Related Shield services
+
+Beyond Marquee's external APIs, the suite runs a Shield-wide **AdGuard Home** DNS
+service for whole-home ad and tracker filtering. Its endpoints, whole-home router
+steps, and `enable`/`disable`/`health` scripts are documented in
+[`services/adguard/README.md`](../services/adguard/README.md). AdGuard Home is a
+separate root service and is not linked into the LSPosed hook runtime.
