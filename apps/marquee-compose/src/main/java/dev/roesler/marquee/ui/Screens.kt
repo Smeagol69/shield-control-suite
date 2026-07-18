@@ -181,28 +181,30 @@ fun ProvidersScreen(
             Spacer(Modifier.height(12.dp))
         }
 
-        when {
-            state.loading && state.rows.isEmpty() ->
-                BusyState("Building ${selected?.name ?: "provider"} categories")
-            state.error != null && state.rows.isEmpty() ->
-                EmptyState("Provider catalog unavailable", state.error)
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 40.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp),
-            ) {
-                state.notice?.let { notice ->
-                    item {
-                        AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                state.loading && state.rows.isEmpty() ->
+                    BusyState("Building ${selected?.name ?: "provider"} categories")
+                state.error != null && state.rows.isEmpty() ->
+                    EmptyState("Provider catalog unavailable", state.error)
+                else -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 40.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    state.notice?.let { notice ->
+                        item {
+                            AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
+                        }
                     }
-                }
-                hero?.let { heroItem ->
-                    item {
-                        Hero(heroItem, onOpen = { controller.openDetails(heroItem) })
+                    hero?.let { heroItem ->
+                        item {
+                            Hero(heroItem, onOpen = { controller.openDetails(heroItem) })
+                        }
                     }
-                }
-                items(state.rows, key = MediaRow::title) { row ->
-                    MediaShelf(row, controller, onFocused = { hero = it })
+                    items(state.rows, key = MediaRow::title) { row ->
+                        MediaShelf(row, controller, onFocused = { hero = it })
+                    }
                 }
             }
         }
@@ -447,12 +449,14 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(15.dp))
-        when {
-            state.loading -> BusyState("Searching")
-            state.error != null -> EmptyState("Search failed", state.error)
-            state.query.isBlank() -> EmptyState("Find your next watch", "Use the Shield keyboard or your remote app to search.")
-            state.results.isEmpty() -> EmptyState("No matches", "Try a different title.")
-            else -> MediaGrid(state.results, controller)
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                state.loading -> BusyState("Searching")
+                state.error != null -> EmptyState("Search failed", state.error)
+                state.query.isBlank() -> EmptyState("Find your next watch", "Use the Shield keyboard or your remote app to search.")
+                state.results.isEmpty() -> EmptyState("No matches", "Try a different title.")
+                else -> MediaGrid(state.results, controller)
+            }
         }
     }
 }
@@ -470,28 +474,34 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
         )
         Spacer(Modifier.height(15.dp))
 
-        when {
-            state.loading -> BusyState(if (state.selectedName == null) "Searching people" else "Loading filmography")
-            state.error != null -> EmptyState("People search failed", state.error)
-            state.people.isEmpty() && state.query.isBlank() ->
-                EmptyState("Explore by cast and crew", "Search a name, then browse their filmography.")
-            else -> {
-                if (state.people.isNotEmpty()) {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(vertical = 7.dp),
-                    ) {
-                        items(state.people, key = { it.id }) { person ->
-                            PersonPoster(person, onClick = { controller.selectPerson(person) })
+        Column(Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                state.loading -> BusyState(if (state.selectedName == null) "Searching people" else "Loading filmography")
+                state.error != null -> EmptyState("People search failed", state.error)
+                state.people.isEmpty() && state.query.isBlank() ->
+                    EmptyState("Explore by cast and crew", "Search a name, then browse their filmography.")
+                else -> {
+                    if (state.people.isNotEmpty()) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(vertical = 7.dp),
+                        ) {
+                            items(state.people, key = { it.id }) { person ->
+                                PersonPoster(person, onClick = { controller.selectPerson(person) })
+                            }
+                        }
+                    }
+                    state.selectedName?.let {
+                        Spacer(Modifier.height(12.dp))
+                        SectionHeading("$it · Filmography")
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    if (state.credits.isNotEmpty()) {
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            MediaGrid(state.credits, controller)
                         }
                     }
                 }
-                state.selectedName?.let {
-                    Spacer(Modifier.height(12.dp))
-                    SectionHeading("$it · Filmography")
-                    Spacer(Modifier.height(10.dp))
-                }
-                if (state.credits.isNotEmpty()) MediaGrid(state.credits, controller)
             }
         }
     }
