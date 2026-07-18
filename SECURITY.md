@@ -57,10 +57,14 @@ Do not commit:
 - signing keys or passwords;
 - ADB private keys;
 - API tokens, cookies, or service credentials;
-- downloaded SDKs, platform tools, APKs, logs, backups, or device dumps.
+- downloaded SDKs, platform tools, logs, backups, or device dumps.
 
 Use `local.properties` for local Android paths and signing values. It is ignored
 by Git; `local.properties.example` documents only placeholders.
+
+Packaged EXEs, signed APKs, and third-party service bundles are published as
+versioned GitHub Release assets with SHA-256 checksums, not committed to Git
+history.
 
 ## Explicit non-goals
 

@@ -1,9 +1,21 @@
-# Shield Lab
+# Shield Control Suite
 
-Shield Lab is a private monorepo for the Windows and Android TV software used with
-an NVIDIA Shield TV Pro. It keeps the desktop control plane, native TV apps,
-root-hosted services, and package-scoped LSPosed experiments in one reviewable
-history.
+One repository for the Windows and Android TV software built for an NVIDIA
+Shield TV Pro: the desktop control plane, Marquee media hub, package-scoped
+LSPosed automation, and the root-hosted AdGuard service.
+
+## Download the finished apps
+
+Open the [latest GitHub release](https://github.com/Smeagol69/shield-control-suite/releases/latest)
+for the one-click Windows installer, portable Windows executable, Android APKs,
+AdGuard package, and SHA-256 checksums.
+
+| Component | Current release | Purpose |
+| --- | --- | --- |
+| Shield Control | 1.0.0 | Standalone Windows control center with bundled ADB and scrcpy |
+| Marquee | 2.2.2 | Native Android TV discovery, provider, Trakt, and playback hub |
+| Shield Hooks | 0.2.0 | Package-scoped LSPosed observation and constrained BeanShell automation |
+| AdGuard Home service | 0.107.78 | Boot-persistent whole-home DNS filtering on the Shield |
 
 ## Projects
 
@@ -14,8 +26,18 @@ history.
 | `apps/marquee` | Legacy WebView Marquee source retained for migration history and rollback. |
 | `modules/shield-hooks` | Modern libxposed module with package-scoped lifecycle observation and a constrained BeanShell automation layer. |
 | `services/adguard` | Boot-persistent AdGuard Home deployment and maintenance scripts. |
+| `docs/ai-collaboration.md` | Shared Git and handoff workflow for Codex and Claude. |
+| `release` | Release inventory and reproducible SHA-256 manifest. |
 
 Each project has its own README with setup, operation, and safety details.
+
+## Codex and Claude collaboration
+
+Both assistants use this Git repository as shared memory. Codex reads
+[`AGENTS.md`](AGENTS.md), Claude reads [`CLAUDE.md`](CLAUDE.md), and both follow
+[`docs/ai-collaboration.md`](docs/ai-collaboration.md). They work on separate
+branches, push every handoff, and review the other assistant's commits before
+continuing.
 
 ## Android quick start
 
@@ -52,8 +74,9 @@ Build optimized release APKs:
   :apps:marquee-compose:assembleRelease
 ```
 
-The Gradle wrapper is committed, but SDKs, JDKs, keystores, credentials, APKs,
-vendor binaries, logs, and device dumps are intentionally excluded.
+The Gradle wrapper is committed, but SDKs, JDKs, keystores, credentials,
+third-party toolchains, logs, and device dumps are intentionally excluded.
+Signed APKs and packaged Windows builds are distributed through GitHub Releases.
 
 ## Safety boundaries
 
