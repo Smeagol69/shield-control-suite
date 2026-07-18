@@ -1,0 +1,43 @@
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.iml
+
+# Secrets and signing
+**/credentials.txt
+**/local.properties
+**/*.jks
+**/*.keystore
+**/*.pem
+**/*.key
+**/*.p12
+
+# Android/Gradle
+**/.gradle/
+**/build/
+**/captures/
+**/*.apk
+**/*.aab
+**/*.apks
+**/*.idsig
+**/tools/
+**/android-sdk/
+**/jdk-*/
+
+# Electron/Node
+**/node_modules/
+**/dist/
+**/vendor/
+
+# Runtime artifacts
+**/*.log
+**/*.pid
+**/data/
+**/tmp/
+**/.env
+**/.env.*
+
+# Reference checkouts
+.refs/
