@@ -10,7 +10,7 @@ object UrlPolicy {
         matchesHttpsHost(url) { host ->
             host == "image.tmdb.org" ||
                 host == "static.tvmaze.com" ||
-                TRAKT_IMAGE_HOST.matches(host)
+                TRAKT_IMAGE_HOSTS.matches(host)
         }
 
     fun canonicalMediaImage(url: String?): String? {
@@ -48,5 +48,6 @@ object UrlPolicy {
         }.getOrDefault(false)
     }
 
-    private val TRAKT_IMAGE_HOST = Regex("""^walter(?:-[a-z0-9]+)?\.trakt\.tv$""")
+    private val TRAKT_IMAGE_HOSTS =
+        Regex("""^(?:media|walter(?:-[a-z0-9]+)?)\.trakt\.tv$""")
 }
