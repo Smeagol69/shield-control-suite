@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Marquee</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- top nav -->
+    <nav id="nav">
+      <div class="brand">▶ Marquee</div>
+      <button class="navbtn" data-route="home" data-focusable>Home</button>
+      <button class="navbtn" data-route="search" data-focusable>Search</button>
+      <button class="navbtn" data-route="actor" data-focusable>Actors</button>
+      <button class="navbtn" data-route="settings" data-focusable>Settings</button>
+    </nav>
+
+    <!-- main scroll area, one screen at a time -->
+    <main id="main"></main>
+  </div>
+
+  <!-- detail overlay -->
+  <div id="detail" class="detail" hidden></div>
+
+  <!-- toast -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="tmdb.js"></script>
+  <script src="nav.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
