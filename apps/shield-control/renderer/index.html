@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>Shield Control</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-status="connecting">
+
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path d="M12 2 20 5v6c0 4.6-3.2 8.4-8 11-4.8-2.6-8-6.4-8-11V5l8-3z"
+              fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M10 9v6l5-3-5-3z" fill="var(--green)"/>
+      </svg>
+      <h1>Shield Control</h1>
+    </div>
+
+    <div class="header-right">
+      <button id="remoteBtn" class="ghost icon-btn" title="Virtual remote">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="7" y="2" width="10" height="20" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="7" r="1.5" fill="currentColor"/><path d="M10 12h4M10 15h4M10 18h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <button id="mgrBtn" class="ghost icon-btn" title="App manager">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      </button>
+      <button id="storeBtn" class="ghost icon-btn" title="TV App Store (sideload)">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 7h16l-1 3.5a3 3 0 0 1-2.9 2.2H7.9A3 3 0 0 1 5 10.5L4 7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 7l1.2-3h13.6L20 7M6 13v6a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <button id="consoleBtn" class="ghost icon-btn" title="Open device console (adb shell)">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 9l3 3-3 3M13 15h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      </button>
+      <button id="screenshotBtn" class="ghost icon-btn" title="Screenshot the Shield → Downloads">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 8a2 2 0 0 1 2-2h1.5l1-2h7l1 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"
+          fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      </button>
+      <button id="rebootBtn" class="ghost icon-btn" title="Reboot the Shield">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7 6a8 8 0 1 0 10 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="status" id="status" title="Connection status">
+        <span class="dot"></span>
+        <span id="statusText">Connecting…</span>
+      </div>
+      <button id="reconnectBtn" class="ghost icon-btn" title="Reconnect now">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="left">
+      <div class="card control-card">
+        <div class="device">
+          <div id="deviceName">NVIDIA Shield</div>
+          <div id="deviceMeta">Looking for the Shield…</div>
+        </div>
+        <button id="controlBtn" class="primary" disabled>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <rect x="2" y="4" width="20" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="M8 21h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M10 8v5l4.5-2.5L10 8z" fill="currentColor"/>
+          </svg>
+          <span id="controlLabel">Control Shield</span>
+        </button>
+        <p class="hint">Right-click = Back · Middle-click = Home · Alt+F = fullscreen</p>
+      </div>
+
+      <div class="card status-card">
+        <div class="status-head">
+          <span>Device status</span>
+          <button id="statusRefresh" class="ghost icon-btn" title="Refresh status now">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div id="statusBody" class="status-body">
+          <div class="status-empty">Waiting for the Shield…</div>
+        </div>
+      </div>
+
+      <div class="card patch-card" id="patchCard">
+        <div class="status-head">
+          <span>Patching · Morphe</span>
+          <button id="patchRefresh" class="ghost icon-btn" title="Re-check Morphe">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div id="patchBody" class="status-body">
+          <div class="status-empty">Checking Morphe…</div>
+        </div>
+        <div class="patch-actions">
+          <button id="openMorpheBtn" class="primary sm" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <rect x="2" y="4" width="20" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+              <path d="M8 21h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span>Open Morphe on desktop</span>
+          </button>
+          <p class="hint">Launches Morphe on the Shield and mirrors it here so you can patch with mouse &amp; keyboard.</p>
+        </div>
+      </div>
+
+      <div class="card dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">
+          <path d="M12 16V6m0 0-4 4m4-4 4 4" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <b>Drop files anywhere</b>
+        <span>Pick <em>Download</em>, <em>KodiDrop</em>, or the open folder when the targets appear</span>
+        <span class="apk-note">.apk files are installed automatically</span>
+      </div>
+
+      <div class="transfers" id="transfers"></div>
+    </section>
+
+    <section class="card browser">
+      <div class="browser-bar">
+        <button id="upBtn" class="ghost icon-btn" title="Up one folder">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 19V5m0 0-6 6m6-6 6 6"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="crumbs" id="crumbs"></div>
+        <span class="rootchip" id="rootChip" hidden>root</span>
+        <button id="refreshBtn" class="ghost icon-btn" title="Refresh">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="navchips" id="navchips"></div>
+      <div class="listing" id="listing">
+        <div class="placeholder">Waiting for the Shield…</div>
+      </div>
+    </section>
+  </main>
+
+  <div class="veil" id="veil" aria-hidden="true">
+    <div class="veil-targets">
+      <div class="veil-target" id="vtDownload" data-dir="">
+        <b>Download</b><span id="vtDownloadPath"></span>
+      </div>
+      <div class="veil-target" id="vtKodi" data-dir="">
+        <b>KodiDrop</b><span id="vtKodiPath"></span>
+      </div>
+      <div class="veil-target" id="vtHere" data-dir="">
+        <b>This folder</b><span id="vtHerePath"></span>
+      </div>
+    </div>
+    <div class="veil-note">.apk files are installed automatically, wherever you drop them</div>
+  </div>
+
+  <div class="overlay" id="logOverlay">
+    <div class="overlay-panel">
+      <div class="overlay-head">
+        <b>Recent Kodi errors</b>
+        <button id="logClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <pre id="logLines"></pre>
+      <div class="overlay-actions">
+        <button id="logPull" class="ghost">Pull full kodi.log → Downloads</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="consoleOverlay">
+    <div class="overlay-panel console-panel">
+      <div class="overlay-head">
+        <b>Device console — <span id="consoleSerial">adb shell</span></b>
+        <button id="consoleClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <pre id="consoleOut" class="console-out">Type a command below. Examples:
+  pm list packages | grep revanced
+  getprop ro.build.version.release
+  dumpsys battery
+Enable “root” to run through Magisk su.</pre>
+      <div class="console-input">
+        <label class="console-root" title="Run the command through Magisk su">
+          <input type="checkbox" id="consoleRoot" /> root
+        </label>
+        <span class="console-prompt" id="consolePrompt">$</span>
+        <input type="text" id="consoleCmd" spellcheck="false" autocomplete="off"
+               placeholder="adb shell command…" />
+        <button id="consoleRun" class="ghost">Run</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="storeOverlay">
+    <div class="overlay-panel store-panel">
+      <div class="overlay-head">
+        <b>TV App Store <span class="store-sub">· sideload</span></b>
+        <button id="storeClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <div class="store-note">
+        This Shield is rooted, so the Play Store hides apps like <b>Disney+</b> and <b>Max</b>.
+        They install by sideload instead: <b>Get APK</b> opens the Android-TV build on APKMirror —
+        download it and drop it on this window to install. Or paste a direct <code>.apk</code> link below.
+      </div>
+      <div class="store-urlbar">
+        <input type="text" id="storeUrl" placeholder="Paste a direct .apk link…" spellcheck="false" autocomplete="off" />
+        <button id="storeUrlGo" class="ghost">Install link</button>
+      </div>
+      <input type="text" id="storeSearch" class="store-search" placeholder="Search apps…" spellcheck="false" autocomplete="off" />
+      <div class="store-grid" id="storeGrid"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="remoteOverlay">
+    <div class="overlay-panel remote-panel">
+      <div class="overlay-head">
+        <b>Remote</b>
+        <button id="remoteClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <div class="remote-body">
+        <div class="remote-top">
+          <button class="rbtn" data-key="26" title="Power">⏻</button>
+          <button class="rbtn" data-key="187" title="Recent apps">▢</button>
+          <button class="rbtn" data-key="3" title="Home">⌂</button>
+          <button class="rbtn" data-key="4" title="Back">↩</button>
+        </div>
+        <div class="dpad">
+          <button class="rbtn up" data-key="19" title="Up">▲</button>
+          <button class="rbtn left" data-key="21" title="Left">◀</button>
+          <button class="rbtn ok" data-key="23" title="Select">OK</button>
+          <button class="rbtn right" data-key="22" title="Right">▶</button>
+          <button class="rbtn down" data-key="20" title="Down">▼</button>
+        </div>
+        <div class="remote-row media">
+          <button class="rbtn" data-key="88" title="Previous">⏮</button>
+          <button class="rbtn" data-key="89" title="Rewind">⏪</button>
+          <button class="rbtn" data-key="85" title="Play / Pause">⏯</button>
+          <button class="rbtn" data-key="90" title="Fast-forward">⏩</button>
+          <button class="rbtn" data-key="87" title="Next">⏭</button>
+        </div>
+        <div class="remote-row vol">
+          <button class="rbtn txt" data-key="25" title="Volume down">VOL −</button>
+          <button class="rbtn txt" data-key="164" title="Mute">MUTE</button>
+          <button class="rbtn txt" data-key="24" title="Volume up">VOL +</button>
+          <button class="rbtn" data-key="82" title="Menu">☰</button>
+        </div>
+        <div class="remote-text">
+          <input type="text" id="remoteText" placeholder="Type into the Shield…" spellcheck="false" autocomplete="off" />
+          <button id="remoteSend" class="ghost">Send</button>
+        </div>
+        <div class="remote-hint">Arrow keys move · Enter selects · Backspace goes back — while this panel is open.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="mgrOverlay">
+    <div class="overlay-panel mgr-panel">
+      <div class="overlay-head">
+        <b>App Manager <span id="mgrCount" class="store-sub"></span></b>
+        <button id="mgrClose" class="ghost icon-btn" title="Close">✕</button>
+      </div>
+      <div class="mgr-bar">
+        <input type="text" id="mgrSearch" class="store-search" placeholder="Search installed apps…" spellcheck="false" autocomplete="off" />
+        <label class="mgr-sys" title="Include system apps"><input type="checkbox" id="mgrSystem" /> system</label>
+        <button id="mgrTrim" class="ghost" title="Reclaim space by clearing every app's cache">Free space</button>
+      </div>
+      <div class="mgr-list" id="mgrList"></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
