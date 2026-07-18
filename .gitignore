@@ -27,6 +27,8 @@ Thumbs.db
 **/tools/
 !apps/shield-control/tools/
 !apps/shield-control/tools/**
+!apps/marquee-compose/tools/
+!apps/marquee-compose/tools/**
 **/android-sdk/
 **/jdk-*/
 

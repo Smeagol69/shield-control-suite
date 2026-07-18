@@ -1,10 +1,26 @@
 package dev.roesler.shieldhooks.script
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScriptPolicyTest {
+    @Test
+    fun everyBuiltInRecipePassesPolicyAndHasUniqueId() {
+        assertEquals(
+            ScriptRecipes.all.size,
+            ScriptRecipes.all.map(ScriptRecipe::id).distinct().size,
+        )
+        ScriptRecipes.all.forEach { recipe ->
+            val decision = ScriptPolicy.validate(recipe.source)
+            assertTrue(
+                "${recipe.title}: ${decision.reasons.joinToString()}",
+                decision.accepted,
+            )
+        }
+    }
+
     @Test
     fun acceptsDocumentedSubset() {
         val source = """

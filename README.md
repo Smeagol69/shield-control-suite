@@ -67,5 +67,6 @@ Installing the Shield Hooks APK does not install or flash LSPosed. Framework
 installation changes boot state and remains a separate, explicit device-owner
 operation.
 
-See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md)
-for the enforced trust boundaries.
+See [SECURITY.md](SECURITY.md), [docs/architecture.md](docs/architecture.md),
+and [docs/service-setup.md](docs/service-setup.md) for trust boundaries and
+credential setup.

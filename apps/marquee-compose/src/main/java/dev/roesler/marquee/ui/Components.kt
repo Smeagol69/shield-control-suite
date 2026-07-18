@@ -101,6 +101,22 @@ fun MediaPoster(
                         )
                     }
                 }
+                item.progressPercent?.coerceIn(0.0, 100.0)?.let { progress ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(5.dp)
+                            .background(Color(0xB20A0B0E)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth((progress / 100.0).toFloat())
+                                .height(5.dp)
+                                .background(MarqueePalette.Gold),
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(8.dp))
             AppText(
@@ -112,12 +128,17 @@ fun MediaPoster(
                 overflow = TextOverflow.Ellipsis,
             )
             AppText(
-                text = listOf(item.year, item.type.apiName.uppercase())
+                text = item.contextLabel ?: listOf(item.year, item.type.apiName.uppercase())
                     .filter(String::isNotBlank)
                     .joinToString(" · "),
                 size = 10.sp,
-                color = MarqueePalette.Muted,
+                color = if (item.progressPercent != null) {
+                    MarqueePalette.Gold
+                } else {
+                    MarqueePalette.Muted
+                },
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

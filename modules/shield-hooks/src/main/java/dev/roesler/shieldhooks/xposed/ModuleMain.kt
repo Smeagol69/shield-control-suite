@@ -37,8 +37,17 @@ class ModuleMain : XposedModule() {
         if (!lifecycleHooksInstalled.compareAndSet(false, true)) return
 
         try {
+            val onCreate = Activity::class.java.getDeclaredMethod("onCreate", Bundle::class.java)
             val onResume = Activity::class.java.getDeclaredMethod("onResume")
             val onPause = Activity::class.java.getDeclaredMethod("onPause")
+            val onUserLeaveHint = Activity::class.java.getDeclaredMethod("onUserLeaveHint")
+            val onDestroy = Activity::class.java.getDeclaredMethod("onDestroy")
+
+            hook(onCreate).intercept { chain ->
+                val result = chain.proceed()
+                (chain.thisObject as? Activity)?.let { dispatch(it, EVENT_CREATED) }
+                result
+            }
 
             hook(onResume).intercept { chain ->
                 val result = chain.proceed()
@@ -49,6 +58,18 @@ class ModuleMain : XposedModule() {
             hook(onPause).intercept { chain ->
                 val result = chain.proceed()
                 (chain.thisObject as? Activity)?.let { dispatch(it, EVENT_PAUSED) }
+                result
+            }
+
+            hook(onUserLeaveHint).intercept { chain ->
+                val result = chain.proceed()
+                (chain.thisObject as? Activity)?.let { dispatch(it, EVENT_USER_LEAVE) }
+                result
+            }
+
+            hook(onDestroy).intercept { chain ->
+                val result = chain.proceed()
+                (chain.thisObject as? Activity)?.let { dispatch(it, EVENT_DESTROYED) }
                 result
             }
 
@@ -99,8 +120,11 @@ class ModuleMain : XposedModule() {
         private const val KEY_EVENT = "event"
         private const val KEY_PACKAGE = "package"
         private const val KEY_CLASS = "class"
+        private const val EVENT_CREATED = "activity.created"
         private const val EVENT_RESUMED = "activity.resumed"
         private const val EVENT_PAUSED = "activity.paused"
+        private const val EVENT_USER_LEAVE = "activity.user_leave"
+        private const val EVENT_DESTROYED = "activity.destroyed"
         private val EVENT_ENDPOINT = "content://$AUTHORITY".toUri()
     }
 }

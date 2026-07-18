@@ -45,16 +45,27 @@ import androidx.compose.ui.unit.sp
 import dev.roesler.marquee.DetailUiState
 import dev.roesler.marquee.HomeUiState
 import dev.roesler.marquee.LaunchResult
+import dev.roesler.marquee.LivePlaybackUiState
 import dev.roesler.marquee.MarqueeController
 import dev.roesler.marquee.PeopleUiState
+import dev.roesler.marquee.ProvidersUiState
 import dev.roesler.marquee.SearchUiState
+import dev.roesler.marquee.TraktPhase
+import dev.roesler.marquee.TraktUiState
+import dev.roesler.marquee.data.CatalogProvider
 import dev.roesler.marquee.data.MarqueeSettings
 import dev.roesler.marquee.data.MediaItem
 import dev.roesler.marquee.data.MediaRow
+import dev.roesler.marquee.data.MediaRowAction
 import dev.roesler.marquee.data.WatchProvider
+import kotlinx.coroutines.delay
 
 @Composable
-fun HomeScreen(state: HomeUiState, controller: MarqueeController) {
+fun HomeScreen(
+    state: HomeUiState,
+    livePlayback: LivePlaybackUiState?,
+    controller: MarqueeController,
+) {
     var hero by remember { mutableStateOf<MediaItem?>(null) }
     LaunchedEffect(state.rows) {
         if (hero == null || state.rows.none { row -> hero in row.items }) {
@@ -70,14 +81,258 @@ fun HomeScreen(state: HomeUiState, controller: MarqueeController) {
             contentPadding = PaddingValues(bottom = 40.dp),
             verticalArrangement = Arrangement.spacedBy(25.dp),
         ) {
+            livePlayback?.let { live ->
+                item { LivePlaybackBanner(live) }
+            }
             hero?.let { heroItem ->
                 item {
                     Hero(heroItem, onOpen = { controller.openDetails(heroItem) })
                 }
             }
+            state.notice?.let { notice ->
+                item {
+                    AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
+                }
+            }
             items(state.rows, key = MediaRow::title) { row ->
                 MediaShelf(row, controller, onFocused = { hero = it })
             }
+        }
+    }
+}
+
+@Composable
+fun ProvidersScreen(
+    state: ProvidersUiState,
+    livePlayback: LivePlaybackUiState?,
+    controller: MarqueeController,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val selected = state.selectedProvider
+    var hero by remember(selected?.id) { mutableStateOf<MediaItem?>(null) }
+    LaunchedEffect(selected?.id, state.rows) {
+        if (hero == null || state.rows.none { row -> hero in row.items }) {
+            hero = state.rows.firstOrNull()?.items?.firstOrNull()
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        SectionHeading(
+            "Streaming providers",
+            "Live regional catalogs · installed apps first",
+        )
+        Spacer(Modifier.height(10.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp),
+        ) {
+            items(state.providers, key = CatalogProvider::id) { provider ->
+                ProviderTab(
+                    provider = provider,
+                    selected = provider.id == selected?.id,
+                    installed = controller.isInstalled(provider.packageName),
+                    onClick = { controller.selectProvider(provider) },
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (selected != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MarqueePalette.Panel)
+                    .border(1.dp, MarqueePalette.Border, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 18.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RemoteImage(
+                    url = selected.logoUrl,
+                    description = selected.name,
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    AppText(selected.name, 19.sp, MarqueePalette.Text, FontWeight.Black)
+                    AppText(
+                        "Catalog by TMDB · progress and recommendations by Trakt",
+                        10.sp,
+                        MarqueePalette.Muted,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                val installed = controller.isInstalled(selected.packageName)
+                ActionButton(
+                    label = if (installed) "Open ${selected.name}" else "App not installed",
+                    enabled = installed,
+                    primary = installed,
+                    onClick = { controller.openCatalogProvider(selected).show(context) },
+                )
+                Spacer(Modifier.width(8.dp))
+                ActionButton("Refresh", controller::refreshProviders)
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+        livePlayback?.let {
+            LivePlaybackBanner(it)
+            Spacer(Modifier.height(12.dp))
+        }
+
+        when {
+            state.loading && state.rows.isEmpty() ->
+                BusyState("Building ${selected?.name ?: "provider"} categories")
+            state.error != null && state.rows.isEmpty() ->
+                EmptyState("Provider catalog unavailable", state.error)
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 40.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                state.notice?.let { notice ->
+                    item {
+                        AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
+                    }
+                }
+                hero?.let { heroItem ->
+                    item {
+                        Hero(heroItem, onOpen = { controller.openDetails(heroItem) })
+                    }
+                }
+                items(state.rows, key = MediaRow::title) { row ->
+                    MediaShelf(row, controller, onFocused = { hero = it })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LivePlaybackBanner(state: LivePlaybackUiState) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(13.dp))
+            .background(MarqueePalette.Panel)
+            .border(1.dp, MarqueePalette.Green.copy(alpha = 0.45f), RoundedCornerShape(13.dp))
+            .padding(horizontal = 17.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MarqueePalette.Green),
+            )
+            Spacer(Modifier.width(9.dp))
+            AppText(
+                "${state.stateLabel} · ${state.providerName}",
+                10.sp,
+                MarqueePalette.Green,
+                FontWeight.ExtraBold,
+            )
+            Spacer(Modifier.width(13.dp))
+            AppText(
+                state.title ?: "Identifying title from the next visible player overlay",
+                14.sp,
+                MarqueePalette.Text,
+                FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            state.episodeLabel?.let {
+                Spacer(Modifier.width(12.dp))
+                AppText(it, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
+            }
+            Spacer(Modifier.width(14.dp))
+            AppText(
+                listOfNotNull(state.positionLabel, state.durationLabel)
+                    .joinToString(" / "),
+                14.sp,
+                MarqueePalette.Gold,
+                FontWeight.Black,
+            )
+        }
+        state.progressFraction?.let { progress ->
+            Spacer(Modifier.height(8.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MarqueePalette.Border),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(progress)
+                        .height(4.dp)
+                        .background(MarqueePalette.Gold),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderTab(
+    provider: CatalogProvider,
+    selected: Boolean,
+    installed: Boolean,
+    onClick: () -> Unit,
+) {
+    FocusBox(
+        onClick = onClick,
+        modifier = Modifier.width(170.dp),
+        focusedScale = 1.03f,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(
+                    if (selected) MarqueePalette.GoldDark else MarqueePalette.PanelSolid,
+                )
+                .border(
+                    1.dp,
+                    if (selected) {
+                        MarqueePalette.Gold.copy(alpha = 0.55f)
+                    } else {
+                        MarqueePalette.Border
+                    },
+                    RoundedCornerShape(11.dp),
+                )
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RemoteImage(
+                url = provider.logoUrl,
+                description = provider.name,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+            )
+            Spacer(Modifier.width(9.dp))
+            AppText(
+                provider.name,
+                11.sp,
+                if (selected) MarqueePalette.Text else MarqueePalette.Muted,
+                FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        if (installed) MarqueePalette.Green else MarqueePalette.Border,
+                    ),
+            )
         }
     }
 }
@@ -155,8 +410,9 @@ private fun MediaShelf(
     controller: MarqueeController,
     onFocused: (MediaItem) -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     Column {
-        SectionHeading(row.title, "${row.items.size} titles")
+        SectionHeading(row.title, row.subtitle ?: "${row.items.size} titles")
         Spacer(Modifier.height(10.dp))
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -165,7 +421,13 @@ private fun MediaShelf(
             items(row.items, key = { "${it.type.apiName}:${it.id}" }) { item ->
                 MediaPoster(
                     item = item,
-                    onClick = { controller.openDetails(item) },
+                    onClick = {
+                        when (row.action) {
+                            MediaRowAction.DETAILS -> controller.openDetails(item)
+                            MediaRowAction.CONTINUE_LOCAL ->
+                                controller.continueLocalPlayback(item).show(context)
+                        }
+                    },
                     onFocused = onFocused,
                 )
             }
@@ -253,12 +515,33 @@ private fun MediaGrid(items: List<MediaItem>, controller: MarqueeController) {
 @Composable
 fun SettingsScreen(
     saved: MarqueeSettings,
+    trakt: TraktUiState,
     controller: MarqueeController,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var bridge by remember { mutableStateOf(controller.playbackBridgeStatus()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            bridge = controller.playbackBridgeStatus()
+            delay(1_000L)
+        }
+    }
     var credential by remember(saved) { mutableStateOf(saved.tmdbCredential) }
     var region by remember(saved) { mutableStateOf(saved.region) }
     var resolver by remember(saved) { mutableStateOf(saved.preferredResolverPackage) }
+    var traktClientId by remember(saved) { mutableStateOf(saved.traktClientId) }
+    var traktClientSecret by remember(saved) { mutableStateOf(saved.traktClientSecret) }
+    var traktRedirectUri by remember(saved) { mutableStateOf(saved.traktRedirectUri) }
     var feedback by remember { mutableStateOf("") }
+
+    fun editedSettings() = MarqueeSettings(
+        tmdbCredential = credential,
+        region = region,
+        preferredResolverPackage = resolver,
+        traktClientId = traktClientId,
+        traktClientSecret = traktClientSecret,
+        traktRedirectUri = traktRedirectUri,
+    )
 
     Row(
         modifier = Modifier
@@ -273,6 +556,8 @@ fun SettingsScreen(
                 AppText("Connect your discovery services", 24.sp, MarqueePalette.Text, FontWeight.Black)
                 Spacer(Modifier.height(20.dp))
 
+                AppText("METADATA", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                Spacer(Modifier.height(10.dp))
                 FieldLabel("TMDB API key or read-access token")
                 AppInput(
                     value = credential,
@@ -292,6 +577,36 @@ fun SettingsScreen(
                 )
                 Spacer(Modifier.height(15.dp))
 
+                AppText("TRAKT SYNC", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                Spacer(Modifier.height(10.dp))
+                FieldLabel("Trakt client ID")
+                AppInput(
+                    value = traktClientId,
+                    onValueChange = { traktClientId = it.take(512) },
+                    placeholder = "Client ID from your Trakt application",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                FieldLabel("Trakt client secret")
+                AppInput(
+                    value = traktClientSecret,
+                    onValueChange = { traktClientSecret = it.take(512) },
+                    placeholder = "Client secret",
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Spacer(Modifier.height(12.dp))
+                FieldLabel("Trakt redirect URI")
+                AppInput(
+                    value = traktRedirectUri,
+                    onValueChange = { traktRedirectUri = it.take(512) },
+                    placeholder = "urn:ietf:wg:oauth:2.0:oob",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(20.dp))
+
+                AppText("PLAYBACK HANDOFF", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                Spacer(Modifier.height(10.dp))
                 FieldLabel("Preferred resolver package")
                 AppInput(
                     value = resolver,
@@ -310,13 +625,7 @@ fun SettingsScreen(
                     label = "Save and load Marquee",
                     primary = true,
                     onClick = {
-                        feedback = controller.saveSettings(
-                            MarqueeSettings(
-                                tmdbCredential = credential,
-                                region = region,
-                                preferredResolverPackage = resolver,
-                            ),
-                        ).fold(
+                        feedback = controller.saveSettings(editedSettings()).fold(
                             onSuccess = { "Settings saved." },
                             onFailure = { it.message ?: "Could not save settings." },
                         )
@@ -335,6 +644,80 @@ fun SettingsScreen(
         ) {
             GlassPanel {
                 Column {
+                    AppText("TRAKT ACCOUNT", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(trakt.statusColor()),
+                        )
+                        Spacer(Modifier.width(9.dp))
+                        Column {
+                            AppText(trakt.statusLabel(), 14.sp, MarqueePalette.Text, FontWeight.Bold)
+                            trakt.accountName?.let {
+                                AppText(it, 11.sp, MarqueePalette.Green, FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    trakt.message?.let {
+                        Spacer(Modifier.height(10.dp))
+                        AppText(it, 12.sp, MarqueePalette.Muted)
+                    }
+                    trakt.userCode?.let { code ->
+                        Spacer(Modifier.height(13.dp))
+                        AppText("ACTIVATION CODE", 9.sp, MarqueePalette.Muted, FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
+                        AppText(code, 26.sp, MarqueePalette.Gold, FontWeight.Black)
+                        trakt.verificationUrl?.let {
+                            AppText(it, 10.sp, MarqueePalette.Muted)
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        when {
+                            trakt.connected -> {
+                                ActionButton(
+                                    label = "Disconnect",
+                                    onClick = controller::disconnectTrakt,
+                                )
+                            }
+                            trakt.phase == TraktPhase.AWAITING_AUTHORIZATION -> {
+                                ActionButton(
+                                    label = "Open activation",
+                                    primary = true,
+                                    onClick = { controller.openTraktActivation().show(context) },
+                                )
+                            }
+                            else -> {
+                                ActionButton(
+                                    label = "Save & connect",
+                                    primary = true,
+                                    enabled = trakt.phase !in setOf(
+                                        TraktPhase.REQUESTING_CODE,
+                                        TraktPhase.DISCONNECTING,
+                                    ),
+                                    onClick = {
+                                        feedback = controller.saveSettings(editedSettings()).fold(
+                                            onSuccess = {
+                                                controller.navigate(dev.roesler.marquee.Destination.SETTINGS)
+                                                controller.connectTrakt()
+                                                "Settings saved. Starting Trakt connection."
+                                            },
+                                            onFailure = {
+                                                it.message ?: "Could not save settings."
+                                            },
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            GlassPanel {
+                Column {
                     AppText("RESOLVER STATUS", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
                     Spacer(Modifier.height(12.dp))
                     ResolverStatus("Stremio", "com.stremio.one", controller)
@@ -346,10 +729,57 @@ fun SettingsScreen(
             }
             GlassPanel {
                 Column {
+                    AppText("REAL-TIME PLAYBACK", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    if (bridge.fullyEnabled) {
+                                        MarqueePalette.Green
+                                    } else {
+                                        MarqueePalette.Gold
+                                    },
+                                ),
+                        )
+                        Spacer(Modifier.width(9.dp))
+                        AppText(
+                            if (bridge.fullyEnabled) {
+                                "Second-level bridge active"
+                            } else {
+                                "Playback bridge needs access"
+                            },
+                            13.sp,
+                            MarqueePalette.Text,
+                            FontWeight.Bold,
+                        )
+                    }
+                    bridge.currentProvider?.let { provider ->
+                        Spacer(Modifier.height(8.dp))
+                        AppText(
+                            listOfNotNull(provider, bridge.currentPosition)
+                                .joinToString(" · "),
+                            13.sp,
+                            MarqueePalette.Green,
+                            FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    AppText(
+                        "MediaSession position is extrapolated every second. Visible title/episode labels are captured only from supported TV players; account data and network traffic are never read.",
+                        11.sp,
+                        MarqueePalette.Muted,
+                    )
+                }
+            }
+            GlassPanel {
+                Column {
                     AppText("PRIVACY", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
                     Spacer(Modifier.height(10.dp))
                     AppText(
-                        "Your TMDB credential and watchlist stay in this app’s private storage. Marquee has no analytics and does not upload them anywhere else.",
+                        "TMDB and Trakt credentials, OAuth tokens, and your local watchlist stay in app-private storage. Marquee has no analytics.",
                         13.sp,
                         MarqueePalette.Muted,
                     )
@@ -366,8 +796,58 @@ fun SettingsScreen(
                     )
                 }
             }
+            GlassPanel {
+                Column {
+                    AppText("DATA SOURCES", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                    Spacer(Modifier.height(10.dp))
+                    AppText(
+                        "TVmaze supplies the keyless streaming schedule under CC BY-SA. TMDB supplies metadata and regional provider availability.",
+                        12.sp,
+                        MarqueePalette.Muted,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ActionButton(
+                            "TVmaze",
+                            onClick = {
+                                controller.openServicePage(
+                                    "https://www.tvmaze.com",
+                                    "TVmaze",
+                                ).show(context)
+                            },
+                        )
+                        ActionButton(
+                            "TMDB",
+                            onClick = {
+                                controller.openServicePage(
+                                    "https://www.themoviedb.org",
+                                    "TMDB",
+                                ).show(context)
+                            },
+                        )
+                    }
+                }
+            }
         }
     }
+}
+
+private fun TraktUiState.statusLabel(): String = when (phase) {
+    TraktPhase.NOT_CONFIGURED -> "Not configured"
+    TraktPhase.DISCONNECTED -> "Ready to connect"
+    TraktPhase.REQUESTING_CODE -> "Requesting code"
+    TraktPhase.AWAITING_AUTHORIZATION -> "Waiting for approval"
+    TraktPhase.CONNECTED -> "Connected"
+    TraktPhase.DISCONNECTING -> "Disconnecting"
+    TraktPhase.ERROR -> "Needs attention"
+}
+
+private fun TraktUiState.statusColor(): Color = when (phase) {
+    TraktPhase.CONNECTED -> MarqueePalette.Green
+    TraktPhase.REQUESTING_CODE, TraktPhase.AWAITING_AUTHORIZATION ->
+        MarqueePalette.Gold
+    TraktPhase.ERROR -> MarqueePalette.Red
+    else -> MarqueePalette.Muted
 }
 
 @Composable
@@ -486,7 +966,11 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             val resolver = settings.preferredResolverPackage
                             ActionButton(
-                                label = if (resolver.isBlank()) "Resolver not set" else "Open preferred",
+                                label = when (resolver) {
+                                    "" -> "Resolver not set"
+                                    "com.stremio.one" -> "Play in Stremio"
+                                    else -> "Open preferred"
+                                },
                                 primary = true,
                                 enabled = resolver.isNotBlank(),
                                 onClick = {
@@ -508,6 +992,38 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                                 label = "All options",
                                 enabled = state.watchOptions.webLink != null,
                                 onClick = { controller.openWebOptions().show(context) },
+                            )
+                        }
+                        if (state.traktConnected) {
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                ActionButton(
+                                    label = when {
+                                        state.traktActionLoading -> "Updating Trakt…"
+                                        state.inTraktWatchlist -> "✓ Trakt watchlist"
+                                        else -> "+ Trakt watchlist"
+                                    },
+                                    enabled = !state.traktActionLoading,
+                                    onClick = controller::toggleTraktWatchlist,
+                                )
+                                ActionButton(
+                                    label = "Mark watched on Trakt",
+                                    enabled = !state.traktActionLoading,
+                                    onClick = controller::markWatchedOnTrakt,
+                                )
+                            }
+                        }
+                        state.traktFeedback?.let { feedback ->
+                            Spacer(Modifier.height(9.dp))
+                            AppText(
+                                feedback,
+                                11.sp,
+                                if (feedback.contains("failed", ignoreCase = true)) {
+                                    MarqueePalette.Red
+                                } else {
+                                    MarqueePalette.Blue
+                                },
+                                FontWeight.Medium,
                             )
                         }
                     }

@@ -11,8 +11,9 @@ trusted boundary.
   approved before its events are accepted.
 - The exported event provider verifies that Android's Binder calling UID owns the
   package claimed by each event.
-- Only `activity.resumed` and `activity.paused` snapshots are accepted. Raw
-  `Activity`, `Context`, `Intent`, or framework objects never cross the process
+- Only allowlisted activity lifecycle snapshots (`created`, `resumed`, `paused`,
+  `user_leave`, and `destroyed`) are accepted. Raw `Activity`, `Context`,
+  lifecycle arguments, `Intent`, or framework objects never cross the process
   boundary.
 - Hook callbacks enqueue bounded asynchronous work so automation cannot block a
   target application's main thread.
@@ -29,9 +30,20 @@ trusted boundary.
 
 ## Marquee privacy
 
-- The TMDB credential and watchlist remain in application-private storage.
-- Poster downloads are restricted to HTTPS requests to `image.tmdb.org`.
+- TMDB/Trakt credentials, Trakt OAuth tokens, and the local watchlist remain in
+  application-private storage and are never compiled into the APK.
+- Media downloads are restricted to HTTPS requests to explicitly allowlisted
+  TMDB, Trakt, and TVmaze image hosts.
+- Trakt uses device authorization, refreshes tokens before expiry, and clears
+  the local session when application credentials change.
+- TVmaze uses only its unauthenticated public schedule API.
 - The app has no analytics or telemetry SDK.
+- Real-time playback uses Android-authorized MediaSession access and an explicit
+  media-package allowlist. Position snapshots, speed, provider package, parsed
+  title/episode labels, and local history stay in app-private storage.
+- The playback accessibility service is statically restricted to supported TV
+  players, runs only while a matching media session is active, stores no raw
+  view text, and never performs clicks or input.
 - The one-time legacy migration view can load only the bundled local asset,
   blocks network requests, and is destroyed after migration.
 
@@ -56,4 +68,6 @@ by Git; `local.properties.example` documents only placeholders.
 - Spoofing device identity, signatures, integrity verdicts, or entitlements.
 - Disabling `FLAG_SECURE` or bypassing protected media paths.
 - Capturing credentials, tokens, keystrokes, or private app storage.
+- Intercepting provider network traffic or extracting personalized private
+  catalogs from provider databases.
 - Hooking financial, authentication, DRM, or system-security components.

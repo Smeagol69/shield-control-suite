@@ -41,6 +41,7 @@ import dev.roesler.marquee.ui.DetailScreen
 import dev.roesler.marquee.ui.HomeScreen
 import dev.roesler.marquee.ui.MarqueePalette
 import dev.roesler.marquee.ui.PeopleScreen
+import dev.roesler.marquee.ui.ProvidersScreen
 import dev.roesler.marquee.ui.SearchScreen
 import dev.roesler.marquee.ui.SettingsScreen
 import dev.roesler.marquee.ui.marqueeBackground
@@ -120,10 +121,13 @@ class MainActivity : ComponentActivity() {
 private fun MarqueeApp(controller: MarqueeController) {
     val destination by controller.destination.collectAsState()
     val home by controller.home.collectAsState()
+    val providers by controller.providers.collectAsState()
     val search by controller.search.collectAsState()
     val people by controller.people.collectAsState()
     val detail by controller.detail.collectAsState()
     val settings by controller.settings.collectAsState()
+    val trakt by controller.trakt.collectAsState()
+    val livePlayback by controller.livePlayback.collectAsState()
 
     Box(
         modifier = Modifier
@@ -142,10 +146,12 @@ private fun MarqueeApp(controller: MarqueeController) {
                 Spacer(Modifier.height(22.dp))
                 Box(Modifier.fillMaxSize()) {
                     when (destination) {
-                        Destination.HOME -> HomeScreen(home, controller)
+                        Destination.HOME -> HomeScreen(home, livePlayback, controller)
+                        Destination.PROVIDERS ->
+                            ProvidersScreen(providers, livePlayback, controller)
                         Destination.SEARCH -> SearchScreen(search, controller)
                         Destination.PEOPLE -> PeopleScreen(people, controller)
-                        Destination.SETTINGS -> SettingsScreen(settings, controller)
+                        Destination.SETTINGS -> SettingsScreen(settings, trakt, controller)
                     }
                 }
             }

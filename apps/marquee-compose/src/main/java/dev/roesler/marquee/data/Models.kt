@@ -23,6 +23,9 @@ data class MediaItem(
     val backdropUrl: String?,
     val overview: String,
     val rating: Double,
+    val imdbId: String? = null,
+    val progressPercent: Double? = null,
+    val contextLabel: String? = null,
 )
 
 data class Person(
@@ -52,13 +55,47 @@ data class WatchOptions(
     val webLink: String?,
 )
 
+data class CatalogProvider(
+    val id: Int,
+    val name: String,
+    val logoUrl: String?,
+    val packageName: String?,
+    val displayPriority: Int,
+)
+
+enum class ProviderSort {
+    POPULAR,
+    NEWEST,
+    TOP_RATED,
+}
+
 data class MediaRow(
     val title: String,
     val items: List<MediaItem>,
+    val subtitle: String? = null,
+    val action: MediaRowAction = MediaRowAction.DETAILS,
 )
+
+enum class MediaRowAction {
+    DETAILS,
+    CONTINUE_LOCAL,
+}
 
 data class MarqueeSettings(
     val tmdbCredential: String = "",
     val region: String = "US",
     val preferredResolverPackage: String = "com.stremio.one",
+    val traktClientId: String = "",
+    val traktClientSecret: String = "",
+    val traktRedirectUri: String = DEFAULT_TRAKT_REDIRECT_URI,
 )
+
+data class ScheduledShow(
+    val title: String,
+    val year: String,
+    val imdbId: String?,
+    val service: String?,
+    val episodeLabel: String?,
+)
+
+const val DEFAULT_TRAKT_REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"

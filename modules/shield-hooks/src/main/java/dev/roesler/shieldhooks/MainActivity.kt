@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.roesler.shieldhooks.script.ScriptPolicy
+import dev.roesler.shieldhooks.script.ScriptRecipes
 import dev.roesler.shieldhooks.script.ScriptResult
 import dev.roesler.shieldhooks.script.ScriptRuntime
 import dev.roesler.shieldhooks.storage.AuditEntry
@@ -218,7 +219,7 @@ private fun OverviewSection(app: ShieldHooksApp, framework: FrameworkStatus) {
                     modifier = Modifier.weight(1f),
                     title = "Hook profile",
                     value = "Observe only",
-                    detail = "Activity resume + pause events",
+                    detail = "Five generic lifecycle events",
                     healthy = true,
                 )
             }
@@ -406,6 +407,40 @@ private fun AutomationSection() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Panel {
+                Eyebrow("SAFE RECIPE LIBRARY")
+                Spacer(Modifier.height(6.dp))
+                Label(
+                    "Package-scoped lifecycle recipes. No app content, credentials, or network data.",
+                    11.sp,
+                    Palette.Muted,
+                )
+                Spacer(Modifier.height(12.dp))
+                ScriptRecipes.all.forEachIndexed { index, recipe ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Label(recipe.title, 13.sp, Palette.Text, FontWeight.Bold)
+                            Spacer(Modifier.height(3.dp))
+                            Label(recipe.description, 10.sp, Palette.Muted)
+                        }
+                        FocusButton(
+                            label = "Load",
+                            onClick = {
+                                source = recipe.source
+                                feedback = "${recipe.title} loaded. Review, test, then save."
+                            },
+                        )
+                    }
+                    if (index < ScriptRecipes.all.lastIndex) {
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
+            }
+
+            Panel {
                 Eyebrow("RUNTIME")
                 Spacer(Modifier.height(12.dp))
                 KeyValue("State", if (runtime.circuitOpen) "Paused" else if (runtime.enabled) "Ready" else "Disabled")
@@ -424,7 +459,7 @@ private fun AutomationSection() {
             Panel {
                 Eyebrow("AVAILABLE VARIABLES")
                 Spacer(Modifier.height(12.dp))
-                CodeLine("eventType", "activity.resumed | activity.paused")
+                CodeLine("eventType", "created | resumed | paused | user_leave | destroyed")
                 CodeLine("packageName", "Calling package")
                 CodeLine("className", "Activity class")
                 CodeLine("timestamp", "Provider time in milliseconds")

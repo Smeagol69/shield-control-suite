@@ -1,15 +1,17 @@
 # Shield Hooks
 
 Shield Hooks is a modern libxposed module and Android TV configuration app for
-package-scoped lifecycle automation. Its initial profile observes activity
-resume/pause events and feeds immutable snapshots into a constrained BeanShell
-runtime.
+package-scoped lifecycle automation. It observes a small generic activity
+lifecycle and feeds immutable snapshots into a constrained BeanShell runtime.
 
 ## What it can do
 
 - Request and display the package scope currently approved by LSPosed.
-- Observe `activity.resumed` and `activity.paused` for approved packages.
+- Observe `activity.created`, `activity.resumed`, `activity.paused`,
+  `activity.user_leave`, and `activity.destroyed` for approved packages.
 - Run a small local automation script in the module's own process.
+- Load built-in, policy-tested recipes for Marquee readiness, foreground
+  tracing, provider handoff auditing, and troubleshooting session boundaries.
 - Record accepted events, script actions, failures, and timing in a local audit
   log.
 - Test scripts while the framework is offline.
@@ -37,6 +39,10 @@ if (api.equalsText(eventType, "activity.resumed")) {
     api.log("Opened " + packageName + " / " + className);
 }
 ```
+
+Every bundled recipe passes the same static policy as user-entered scripts.
+Recipes only receive package name, activity class, event type, and timestamp.
+They do not inspect view content, intents, media, credentials, or network data.
 
 ## Deliberate limits
 

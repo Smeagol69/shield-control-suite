@@ -18,8 +18,8 @@ android {
         applicationId = "dev.roesler.marquee"
         minSdk = 26
         targetSdk = 37
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 5
+        versionName = "2.2.1"
     }
 
     val marqueeKeyStore = localProperties.getProperty("marquee.keystore")

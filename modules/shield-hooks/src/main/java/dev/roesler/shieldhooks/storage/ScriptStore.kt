@@ -2,6 +2,7 @@ package dev.roesler.shieldhooks.storage
 
 import android.content.Context
 import androidx.core.content.edit
+import dev.roesler.shieldhooks.script.ScriptRecipes
 
 data class ScriptSettings(
     val enabled: Boolean,
@@ -9,9 +10,7 @@ data class ScriptSettings(
 )
 
 object ScriptStore {
-    const val DEFAULT_SCRIPT = """if (api.equalsText(eventType, "activity.resumed")) {
-    api.log("Opened " + packageName + " / " + className);
-}"""
+    val DEFAULT_SCRIPT: String = checkNotNull(ScriptRecipes.find("foreground_trace")).source
 
     private const val PREFS = "shield_hooks_script"
     private const val KEY_ENABLED = "enabled"
