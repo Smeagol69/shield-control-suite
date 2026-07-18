@@ -29,6 +29,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -241,10 +248,21 @@ fun AppInput(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    val focusManager = LocalFocusManager.current
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier
+            // A BasicTextField swallows D-pad up/down for the caret, trapping focus on TV.
+            // Move focus out so the remote can reach the results below (and the nav above).
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
+                    Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
+                    else -> false
+                }
+            }
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF0D0F13))
             .border(

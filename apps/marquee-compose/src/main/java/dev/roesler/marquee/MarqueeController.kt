@@ -922,6 +922,42 @@ class MarqueeController(context: Context) {
                     ProviderSort.POPULAR,
                     MOVIE_GENRE_COMEDY,
                 ),
+                "Action" to discoveryRow(
+                    "Action",
+                    MediaType.MOVIE,
+                    ProviderSort.POPULAR,
+                    MOVIE_GENRE_ACTION,
+                ),
+                "Sci-Fi" to discoveryRow(
+                    "Sci-Fi",
+                    MediaType.MOVIE,
+                    ProviderSort.POPULAR,
+                    MOVIE_GENRE_SCIFI,
+                ),
+                "Horror" to discoveryRow(
+                    "Horror",
+                    MediaType.MOVIE,
+                    ProviderSort.POPULAR,
+                    MOVIE_GENRE_HORROR,
+                ),
+                "Drama series" to discoveryRow(
+                    "Drama series",
+                    MediaType.TV,
+                    ProviderSort.POPULAR,
+                    GENRE_DRAMA,
+                ),
+                "Documentaries" to discoveryRow(
+                    "Documentaries",
+                    MediaType.MOVIE,
+                    ProviderSort.POPULAR,
+                    GENRE_DOCUMENTARY,
+                ),
+                "Animation" to discoveryRow(
+                    "Animation",
+                    MediaType.MOVIE,
+                    ProviderSort.POPULAR,
+                    GENRE_ANIMATION,
+                ),
             )
 
             val includeTrakt = _trakt.value.connected
@@ -1359,6 +1395,12 @@ class MarqueeController(context: Context) {
     companion object {
         private const val MOVIE_GENRE_COMEDY = 35
         private const val MOVIE_GENRE_FAMILY = 10_751
+        private const val MOVIE_GENRE_ACTION = 28
+        private const val MOVIE_GENRE_SCIFI = 878
+        private const val MOVIE_GENRE_HORROR = 27
+        private const val GENRE_DRAMA = 18       // shared movie/TV id
+        private const val GENRE_DOCUMENTARY = 99 // shared movie/TV id
+        private const val GENRE_ANIMATION = 16   // shared movie/TV id
         private const val PLAYBACK_FILTER_LIMIT = 18
         private const val RECOMMENDATION_FILTER_LIMIT = 14
         private const val AVAILABILITY_CONCURRENCY = 4
