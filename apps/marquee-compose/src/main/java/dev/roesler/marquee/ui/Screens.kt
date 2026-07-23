@@ -1,6 +1,7 @@
 package dev.roesler.marquee.ui
 
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +63,7 @@ import dev.roesler.marquee.data.MarqueeSettings
 import dev.roesler.marquee.data.MediaItem
 import dev.roesler.marquee.data.MediaRow
 import dev.roesler.marquee.data.MediaRowAction
+import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.WatchProvider
 import dev.roesler.marquee.data.filterCatalogRows
 import kotlinx.coroutines.delay
@@ -107,6 +109,7 @@ fun HomeScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ProvidersScreen(
     state: ProvidersUiState,
@@ -123,12 +126,13 @@ fun ProvidersScreen(
     Column(Modifier.fillMaxSize()) {
         SectionHeading(
             "Streaming providers",
-            "Live regional catalogs · installed apps first",
+            selected?.let { "${it.name} · live regional catalog" }
+                ?: "Live regional catalogs · installed apps first",
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(6.dp))
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
         ) {
             items(state.providers, key = CatalogProvider::id) { provider ->
                 ProviderTab(
@@ -140,52 +144,7 @@ fun ProvidersScreen(
                 )
             }
         }
-        Spacer(Modifier.height(12.dp))
-
-        if (selected != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MarqueePalette.Panel)
-                    .border(1.dp, MarqueePalette.Border, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 15.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RemoteImage(
-                    url = selected.logoUrl,
-                    description = selected.name,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp)),
-                    contentScale = ContentScale.Fit,
-                )
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    AppText(selected.name, 17.sp, MarqueePalette.Text, FontWeight.Black)
-                    AppText(
-                        "Catalog by TMDB · progress and recommendations by Trakt",
-                        10.sp,
-                        MarqueePalette.Muted,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                val installed = controller.isInstalled(selected.packageName)
-                ActionButton(
-                    label = if (installed) "Open ${selected.name}" else "App not installed",
-                    enabled = installed,
-                    primary = installed,
-                    onClick = { controller.openCatalogProvider(selected).show(context) },
-                )
-                Spacer(Modifier.width(8.dp))
-                ActionButton(
-                    label = "Refresh",
-                    onClick = controller::refreshProviders,
-                    modifier = Modifier.focusRequester(catalogActionsRequester),
-                )
-            }
-            Spacer(Modifier.height(14.dp))
-        }
+        Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -198,8 +157,8 @@ fun ProvidersScreen(
                     onClick = { controller.setProviderFilter(filter) },
                 )
             }
-            Spacer(Modifier.weight(1f))
             if (state.totalCategoryCount > 0) {
+                Spacer(Modifier.width(4.dp))
                 AppText(
                     text = if (state.loading) {
                         "Loading ${state.loadedCategoryCount}/${state.totalCategoryCount} categories"
@@ -211,6 +170,7 @@ fun ProvidersScreen(
                     weight = FontWeight.Bold,
                 )
             }
+            Spacer(Modifier.weight(1f))
             ActionButton(
                 label = "Surprise me",
                 enabled = displayedRows.isNotEmpty(),
@@ -220,11 +180,27 @@ fun ProvidersScreen(
                     }
                 },
             )
+            selected?.let { provider ->
+                Spacer(Modifier.width(8.dp))
+                val installed = controller.isInstalled(provider.packageName)
+                ActionButton(
+                    label = if (installed) "Open ${provider.name}" else "Not installed",
+                    enabled = installed,
+                    primary = installed,
+                    onClick = { controller.openCatalogProvider(provider).show(context) },
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            ActionButton(
+                label = "Refresh",
+                onClick = controller::refreshProviders,
+                modifier = Modifier.focusRequester(catalogActionsRequester),
+            )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         livePlayback?.let {
             LivePlaybackBanner(it)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -237,20 +213,44 @@ fun ProvidersScreen(
                     EmptyState("No matching titles", "Try another catalog filter.")
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 40.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    contentPadding = PaddingValues(bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     state.notice?.let { notice ->
                         item {
                             AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
                         }
                     }
-                    items(displayedRows, key = MediaRow::title) { row ->
-                        MediaShelf(row, controller, onFocused = {})
+                    displayedRows.forEachIndexed { index, row ->
+                        stickyHeader(key = "category:${row.title}") {
+                            CategoryHeader(
+                                row = row,
+                                position = index + 1,
+                                total = displayedRows.size,
+                            )
+                        }
+                        item(key = "titles:${row.title}") {
+                            MediaShelfRow(row, controller, onFocused = {})
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CategoryHeader(row: MediaRow, position: Int, total: Int) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MarqueePalette.Background.copy(alpha = 0.97f))
+            .padding(top = 4.dp, bottom = 2.dp),
+    ) {
+        SectionHeading(
+            row.title,
+            "$position/$total · ${row.subtitle ?: "${row.items.size} titles"}",
+        )
     }
 }
 
@@ -329,17 +329,18 @@ private fun ProviderTab(
     downFocusRequester: FocusRequester,
     onClick: () -> Unit,
 ) {
+    val layout = LocalMarqueeLayout.current
     FocusBox(
         onClick = onClick,
         modifier = Modifier
-            .width(152.dp)
+            .width(layout.providerTabWidth)
             .focusProperties { down = downFocusRequester },
         focusedScale = 1.03f,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp)
+                .height(layout.providerTabHeight)
                 .clip(RoundedCornerShape(11.dp))
                 .background(
                     if (selected) MarqueePalette.GoldDark else MarqueePalette.PanelSolid,
@@ -388,10 +389,11 @@ private fun ProviderTab(
 
 @Composable
 private fun Hero(item: MediaItem, onOpen: () -> Unit) {
+    val layout = LocalMarqueeLayout.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(245.dp)
+            .height(layout.heroHeight)
             .clip(RoundedCornerShape(20.dp))
             .border(1.dp, MarqueePalette.Border, RoundedCornerShape(20.dp)),
     ) {
@@ -416,15 +418,15 @@ private fun Hero(item: MediaItem, onOpen: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .width(500.dp)
-                .padding(25.dp),
+                .width(if (layout.compact) 430.dp else 500.dp)
+                .padding(if (layout.compact) 20.dp else 25.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             AppText("FEATURED", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
             Spacer(Modifier.height(8.dp))
             AppText(
                 item.title,
-                30.sp,
+                if (layout.compact) 26.sp else 30.sp,
                 MarqueePalette.Text,
                 FontWeight.Black,
                 maxLines = 2,
@@ -459,27 +461,36 @@ private fun MediaShelf(
     controller: MarqueeController,
     onFocused: (MediaItem) -> Unit,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
     Column {
         SectionHeading(row.title, row.subtitle ?: "${row.items.size} titles")
-        Spacer(Modifier.height(8.dp))
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 7.dp),
-        ) {
-            items(row.items, key = { "${it.type.apiName}:${it.id}" }) { item ->
-                MediaPoster(
-                    item = item,
-                    onClick = {
-                        when (row.action) {
-                            MediaRowAction.DETAILS -> controller.openDetails(item)
-                            MediaRowAction.CONTINUE_LOCAL ->
-                                controller.continueLocalPlayback(item).show(context)
-                        }
-                    },
-                    onFocused = onFocused,
-                )
-            }
+        Spacer(Modifier.height(6.dp))
+        MediaShelfRow(row, controller, onFocused)
+    }
+}
+
+@Composable
+private fun MediaShelfRow(
+    row: MediaRow,
+    controller: MarqueeController,
+    onFocused: (MediaItem) -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+    ) {
+        items(row.items, key = { "${it.type.apiName}:${it.id}" }) { item ->
+            MediaPoster(
+                item = item,
+                onClick = {
+                    when (row.action) {
+                        MediaRowAction.DETAILS -> controller.openDetails(item)
+                        MediaRowAction.CONTINUE_LOCAL ->
+                            controller.continueLocalPlayback(item).show(context)
+                    }
+                },
+                onFocused = onFocused,
+            )
         }
     }
 }
@@ -512,42 +523,67 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
 fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
     Column(Modifier.fillMaxSize()) {
         SectionHeading("People", "Search actors and directors")
-        Spacer(Modifier.height(13.dp))
-        AppInput(
-            value = state.query,
-            onValueChange = controller::searchPeople,
-            placeholder = "Search by actor or director…",
+        Spacer(Modifier.height(8.dp))
+        Row(
             modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(15.dp))
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppInput(
+                value = state.query,
+                onValueChange = controller::searchPeople,
+                placeholder = "Search by actor or director…",
+                modifier = Modifier.weight(1f),
+                onSubmit = controller::submitPeopleSearch,
+            )
+            ActionButton(
+                label = "Search",
+                primary = state.query.isNotBlank(),
+                onClick = controller::submitPeopleSearch,
+            )
+        }
+        Spacer(Modifier.height(10.dp))
 
-        Column(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                state.loading -> BusyState(if (state.selectedName == null) "Searching people" else "Loading filmography")
-                state.error != null -> EmptyState("People search failed", state.error)
-                state.people.isEmpty() && state.query.isBlank() ->
-                    EmptyState("Explore by cast and crew", "Search a name, then browse their filmography.")
-                else -> {
-                    if (state.people.isNotEmpty()) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            contentPadding = PaddingValues(vertical = 7.dp),
-                        ) {
-                            items(state.people, key = { it.id }) { person ->
-                                PersonPoster(person, onClick = { controller.selectPerson(person) })
-                            }
-                        }
-                    }
-                    state.selectedName?.let {
-                        Spacer(Modifier.height(12.dp))
-                        SectionHeading("$it · Filmography")
-                        Spacer(Modifier.height(10.dp))
-                    }
-                    if (state.credits.isNotEmpty()) {
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
-                            MediaGrid(state.credits, controller)
-                        }
-                    }
+        if (state.selectedName != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SectionHeading(
+                    "${state.selectedName} · Filmography",
+                    modifier = Modifier.weight(1f),
+                )
+                ActionButton(
+                    label = "Back to people",
+                    onClick = controller::clearPersonSelection,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    state.loading -> BusyState("Loading filmography")
+                    state.error != null -> EmptyState("Filmography unavailable", state.error)
+                    state.credits.isEmpty() ->
+                        EmptyState("No credits found", "Try another person.")
+                    else -> MediaGrid(state.credits, controller)
+                }
+            }
+        } else {
+            SectionHeading(
+                if (state.showingPopular && state.query.isBlank()) "Popular people" else "Search results",
+                if (state.loading) "Updating…" else "${state.people.size} people",
+            )
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    state.loading && state.people.isEmpty() -> BusyState("Loading people")
+                    state.error != null && state.people.isEmpty() ->
+                        EmptyState("People search failed", state.error)
+                    state.people.isEmpty() && state.query.isBlank() ->
+                        EmptyState("Explore by cast and crew", "Popular people will appear here.")
+                    state.people.isEmpty() ->
+                        EmptyState("No people found", "Try a full actor or director name.")
+                    else -> PeopleGrid(state.people, controller)
                 }
             }
         }
@@ -556,8 +592,9 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
 
 @Composable
 private fun MediaGrid(items: List<MediaItem>, controller: MarqueeController) {
+    val layout = LocalMarqueeLayout.current
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(138.dp),
+        columns = GridCells.Adaptive(layout.gridMinimumWidth),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 40.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -565,6 +602,22 @@ private fun MediaGrid(items: List<MediaItem>, controller: MarqueeController) {
     ) {
         items(items, key = { "${it.type.apiName}:${it.id}" }) { item ->
             MediaPoster(item, onClick = { controller.openDetails(item) })
+        }
+    }
+}
+
+@Composable
+private fun PeopleGrid(people: List<Person>, controller: MarqueeController) {
+    val layout = LocalMarqueeLayout.current
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(layout.personWidth + 8.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 32.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(people, key = { it.id }) { person ->
+            PersonPoster(person, onClick = { controller.selectPerson(person) })
         }
     }
 }

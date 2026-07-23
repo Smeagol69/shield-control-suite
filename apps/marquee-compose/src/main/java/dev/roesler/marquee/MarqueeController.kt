@@ -127,6 +127,7 @@ data class PeopleUiState(
     val query: String = "",
     val loading: Boolean = false,
     val people: List<Person> = emptyList(),
+    val showingPopular: Boolean = false,
     val selectedName: String? = null,
     val credits: List<MediaItem> = emptyList(),
     val error: String? = null,
@@ -217,6 +218,13 @@ class MarqueeController(context: Context) {
         if (destination == Destination.HOME && _home.value.rows.isEmpty()) refreshHome()
         if (destination == Destination.PROVIDERS && _providers.value.providers.isEmpty()) {
             refreshProviders()
+        }
+        if (
+            destination == Destination.PEOPLE &&
+            _people.value.people.isEmpty() &&
+            !_people.value.loading
+        ) {
+            loadPopularPeople()
         }
     }
 
@@ -381,20 +389,70 @@ class MarqueeController(context: Context) {
     fun searchPeople(query: String) {
         _people.value = _people.value.copy(
             query = query,
+            showingPopular = false,
             selectedName = null,
             credits = emptyList(),
             error = null,
         )
         peopleJob?.cancel()
         if (query.isBlank()) {
-            _people.value = PeopleUiState()
+            loadPopularPeople()
             return
         }
+        launchPeopleSearch(query.trim(), debounceMillis = 350L)
+    }
+
+    fun submitPeopleSearch() {
+        val query = _people.value.query.trim()
+        if (query.isBlank()) {
+            loadPopularPeople()
+        } else {
+            launchPeopleSearch(query, debounceMillis = 0L)
+        }
+    }
+
+    fun clearPersonSelection() {
+        if (_people.value.people.isEmpty()) {
+            loadPopularPeople()
+        } else {
+            _people.value = _people.value.copy(
+                loading = false,
+                selectedName = null,
+                credits = emptyList(),
+                error = null,
+            )
+        }
+    }
+
+    private fun launchPeopleSearch(query: String, debounceMillis: Long) {
+        peopleJob?.cancel()
         peopleJob = scope.launch {
-            delay(350)
-            _people.value = _people.value.copy(loading = true)
+            if (debounceMillis > 0L) delay(debounceMillis)
+            _people.value = _people.value.copy(
+                loading = true,
+                showingPopular = false,
+                error = null,
+            )
             serviceResult {
-                withContext(Dispatchers.IO) { tmdbClient.searchPeople(query.trim()) }
+                withContext(Dispatchers.IO) { tmdbClient.searchPeople(query) }
+            }.onSuccess {
+                _people.value = _people.value.copy(loading = false, people = it)
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _people.value = _people.value.copy(
+                    loading = false,
+                    error = it.userMessage(),
+                )
+            }
+        }
+    }
+
+    private fun loadPopularPeople() {
+        peopleJob?.cancel()
+        peopleJob = scope.launch {
+            _people.value = PeopleUiState(loading = true, showingPopular = true)
+            serviceResult {
+                withContext(Dispatchers.IO) { tmdbClient.popularPeople() }
             }.onSuccess {
                 _people.value = _people.value.copy(loading = false, people = it)
             }.onFailure {
@@ -484,7 +542,10 @@ class MarqueeController(context: Context) {
     /** Jump from a detail-screen cast member to the People tab showing their filmography. */
     fun openPersonFilmography(person: Person) {
         closeDetails()
-        _people.value = PeopleUiState(selectedName = person.name)
+        _people.value = PeopleUiState(
+            people = listOf(person),
+            selectedName = person.name,
+        )
         _destination.value = Destination.PEOPLE
         selectPerson(person)
     }
@@ -734,6 +795,11 @@ class MarqueeController(context: Context) {
         when {
             _detail.value.visible -> {
                 closeDetails()
+                true
+            }
+            _destination.value == Destination.PEOPLE &&
+                _people.value.selectedName != null -> {
+                clearPersonSelection()
                 true
             }
             _destination.value != Destination.HOME -> {

@@ -7,18 +7,21 @@ legacy package ID `dev.roesler.marquee`.
 ## Features
 
 - Trending, popular, now-playing, and top-rated movie/TV rows from TMDB.
-- Title search plus actor/director search and filmographies.
+- Title search plus a remote-friendly People browser with popular actors,
+  explicit search submission, and dedicated filmography views.
 - Details, runtime or season information, recommendations, and a local
-  watchlist.
+  watchlist, plus a cast row that opens each person's filmography.
 - A dynamic `Because you liked …` row based on the last opened title.
 - Regional `Where to watch` data with installed-provider detection.
 - A provider hub inspired by native TV launchers: live regional provider tabs,
   installed apps first, 26 provider-filtered discovery categories, and
-  All/Movies/Series filters with a `Surprise me` action.
+  All/Movies/Series filters with a `Surprise me` action. Category headings stay
+  pinned while their poster shelf has focus.
 - Paginated discovery that loads up to 60 unique poster titles per shelf instead
   of stopping at TMDB's 20-item first page.
-- A compact 16:9 TV layout with stable focus sizing, uncropped 2:3 posters,
-  fit-to-card provider logos, and a larger bounded artwork cache.
+- A responsive 16:9 TV layout calibrated for the Shield's 960×540 logical
+  canvas, with stable focus sizing, clean 2:3 posters, fit-to-card provider
+  logos, safe-edge spacing, and a larger bounded artwork cache.
 - Progressive provider loading: six core shelves appear first, personalization
   follows, and the remaining categories arrive three at a time with visible
   progress.

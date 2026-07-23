@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +39,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -45,6 +48,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -74,8 +78,9 @@ fun MediaPoster(
     modifier: Modifier = Modifier,
     onFocused: (MediaItem) -> Unit = {},
 ) {
+    val layout = LocalMarqueeLayout.current
     FocusBox(
-        modifier = modifier.width(120.dp),
+        modifier = modifier.width(layout.posterWidth),
         onClick = onClick,
         onFocused = { onFocused(item) },
         shape = RoundedCornerShape(12.dp),
@@ -92,7 +97,7 @@ fun MediaPoster(
                     url = item.posterUrl,
                     description = item.title,
                     modifier = Modifier.matchParentSize(),
-                    contentScale = ContentScale.Fit,
+                    contentScale = ContentScale.Crop,
                 )
                 if (item.rating > 0.0) {
                     Box(
@@ -156,8 +161,9 @@ fun MediaPoster(
 
 @Composable
 fun PersonPoster(person: Person, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val layout = LocalMarqueeLayout.current
     FocusBox(
-        modifier = modifier.width(132.dp),
+        modifier = modifier.width(layout.personWidth),
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
     ) {
@@ -198,6 +204,7 @@ fun ActionButton(
     primary: Boolean = false,
     enabled: Boolean = true,
 ) {
+    val layout = LocalMarqueeLayout.current
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val shape = RoundedCornerShape(11.dp)
@@ -228,7 +235,10 @@ fun ActionButton(
                 onClick = onClick,
             )
             .focusable(enabled = enabled, interactionSource = interaction)
-            .padding(horizontal = 15.dp, vertical = 9.dp),
+            .padding(
+                horizontal = layout.controlHorizontalPadding,
+                vertical = layout.controlVerticalPadding,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         AppText(
@@ -248,10 +258,13 @@ fun AppInput(
     modifier: Modifier = Modifier,
     singleLine: Boolean = true,
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    onSubmit: (() -> Unit)? = null,
 ) {
+    val layout = LocalMarqueeLayout.current
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -273,7 +286,10 @@ fun AppInput(
                 if (focused) MarqueePalette.Gold else MarqueePalette.Border,
                 RoundedCornerShape(12.dp),
             )
-            .padding(horizontal = 15.dp, vertical = 13.dp),
+            .padding(
+                horizontal = layout.controlHorizontalPadding,
+                vertical = if (layout.compact) 10.dp else 13.dp,
+            ),
         textStyle = TextStyle(
             color = MarqueePalette.Text,
             fontSize = 14.sp,
@@ -283,6 +299,15 @@ fun AppInput(
         interactionSource = interaction,
         singleLine = singleLine,
         visualTransformation = visualTransformation,
+        keyboardOptions = KeyboardOptions(
+            imeAction = if (onSubmit == null) ImeAction.Default else ImeAction.Search,
+        ),
+        keyboardActions = KeyboardActions(
+            onSearch = {
+                onSubmit?.invoke()
+                keyboardController?.hide()
+            },
+        ),
         decorationBox = { input ->
             Box {
                 if (value.isBlank()) {
@@ -295,15 +320,28 @@ fun AppInput(
 }
 
 @Composable
-fun SectionHeading(title: String, subtitle: String? = null) {
+fun SectionHeading(
+    title: String,
+    subtitle: String? = null,
+    modifier: Modifier = Modifier,
+) {
+    val layout = LocalMarqueeLayout.current
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Bottom,
     ) {
-        AppText(title, 18.sp, MarqueePalette.Text, FontWeight.ExtraBold)
+        AppText(title, layout.sectionTitleSize, MarqueePalette.Text, FontWeight.ExtraBold)
         subtitle?.let {
             Spacer(Modifier.width(10.dp))
-            AppText(it, 10.sp, MarqueePalette.Muted, FontWeight.Medium)
+            AppText(
+                it,
+                layout.sectionSubtitleSize,
+                MarqueePalette.Muted,
+                FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

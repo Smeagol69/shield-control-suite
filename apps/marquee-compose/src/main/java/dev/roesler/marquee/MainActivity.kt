@@ -14,6 +14,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -39,12 +41,15 @@ import dev.roesler.marquee.data.SettingsStore
 import dev.roesler.marquee.ui.AppText
 import dev.roesler.marquee.ui.DetailScreen
 import dev.roesler.marquee.ui.HomeScreen
+import dev.roesler.marquee.ui.LocalMarqueeLayout
 import dev.roesler.marquee.ui.MarqueePalette
 import dev.roesler.marquee.ui.PeopleScreen
 import dev.roesler.marquee.ui.ProvidersScreen
 import dev.roesler.marquee.ui.SearchScreen
 import dev.roesler.marquee.ui.SettingsScreen
+import dev.roesler.marquee.ui.marqueeLayout
 import dev.roesler.marquee.ui.marqueeBackground
+import dev.roesler.marquee.ui.marqueeSizeClass
 
 class MainActivity : ComponentActivity() {
     private var controller: MarqueeController? = null
@@ -129,29 +134,39 @@ private fun MarqueeApp(controller: MarqueeController) {
     val trakt by controller.trakt.collectAsState()
     val livePlayback by controller.livePlayback.collectAsState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .marqueeBackground(),
-    ) {
-        if (detail.visible) {
-            DetailScreen(detail, controller)
-        } else {
-            Column(
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val layout = remember(maxWidth, maxHeight) {
+            marqueeLayout(marqueeSizeClass(maxWidth.value, maxHeight.value))
+        }
+        CompositionLocalProvider(LocalMarqueeLayout provides layout) {
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 32.dp, vertical = 20.dp),
+                    .marqueeBackground(),
             ) {
-                MarqueeHeader(destination, controller)
-                Spacer(Modifier.height(16.dp))
-                Box(Modifier.fillMaxSize()) {
-                    when (destination) {
-                        Destination.HOME -> HomeScreen(home, livePlayback, controller)
-                        Destination.PROVIDERS ->
-                            ProvidersScreen(providers, livePlayback, controller)
-                        Destination.SEARCH -> SearchScreen(search, controller)
-                        Destination.PEOPLE -> PeopleScreen(people, controller)
-                        Destination.SETTINGS -> SettingsScreen(settings, trakt, controller)
+                if (detail.visible) {
+                    DetailScreen(detail, controller)
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                horizontal = layout.outerHorizontalPadding,
+                                vertical = layout.outerVerticalPadding,
+                            ),
+                    ) {
+                        MarqueeHeader(destination, controller)
+                        Spacer(Modifier.height(layout.headerContentGap))
+                        Box(Modifier.fillMaxSize()) {
+                            when (destination) {
+                                Destination.HOME -> HomeScreen(home, livePlayback, controller)
+                                Destination.PROVIDERS ->
+                                    ProvidersScreen(providers, livePlayback, controller)
+                                Destination.SEARCH -> SearchScreen(search, controller)
+                                Destination.PEOPLE -> PeopleScreen(people, controller)
+                                Destination.SETTINGS -> SettingsScreen(settings, trakt, controller)
+                            }
+                        }
                     }
                 }
             }
@@ -161,14 +176,15 @@ private fun MarqueeApp(controller: MarqueeController) {
 
 @Composable
 private fun MarqueeHeader(destination: Destination, controller: MarqueeController) {
+    val layout = LocalMarqueeLayout.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .width(38.dp)
-                .height(38.dp)
+                .width(layout.headerLogoSize)
+                .height(layout.headerLogoSize)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MarqueePalette.GoldDark)
                 .border(
@@ -182,7 +198,12 @@ private fun MarqueeHeader(destination: Destination, controller: MarqueeControlle
         }
         Spacer(Modifier.width(11.dp))
         Column {
-            AppText("MARQUEE", 18.sp, MarqueePalette.Text, FontWeight.Black)
+            AppText(
+                "MARQUEE",
+                if (layout.compact) 17.sp else 18.sp,
+                MarqueePalette.Text,
+                FontWeight.Black,
+            )
             AppText("Discovery, without the wandering", 9.sp, MarqueePalette.Muted)
         }
         Spacer(Modifier.weight(1f))
@@ -200,6 +221,7 @@ private fun MarqueeHeader(destination: Destination, controller: MarqueeControlle
 
 @Composable
 private fun NavItem(item: Destination, selected: Boolean, onClick: () -> Unit) {
+    val layout = LocalMarqueeLayout.current
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val shape = RoundedCornerShape(50)
@@ -218,7 +240,10 @@ private fun NavItem(item: Destination, selected: Boolean, onClick: () -> Unit) {
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .focusable(interactionSource = interaction)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(
+                horizontal = if (layout.compact) 12.dp else 14.dp,
+                vertical = if (layout.compact) 7.dp else 8.dp,
+            ),
     ) {
         AppText(
             item.label,

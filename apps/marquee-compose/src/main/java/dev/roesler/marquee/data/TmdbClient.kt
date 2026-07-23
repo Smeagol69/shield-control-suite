@@ -139,28 +139,11 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun searchPeople(query: String): List<Person> {
         val results = request("/search/person", mapOf("query" to query)).optJSONArray("results")
             ?: JSONArray()
-        return buildList {
-            for (index in 0 until minOf(results.length(), RESULT_LIMIT)) {
-                val person = results.optJSONObject(index) ?: continue
-                val name = person.optString("name")
-                if (name.isBlank()) continue
-                val knownFor = person.optJSONArray("known_for")
-                    .toObjectSequence()
-                    .map { it.optString("title").ifBlank { it.optString("name") } }
-                    .filter(String::isNotBlank)
-                    .take(3)
-                    .joinToString()
-                add(
-                    Person(
-                        id = person.optInt("id"),
-                        name = name,
-                        photoUrl = image(person.optNullableString("profile_path"), "w342"),
-                        knownFor = knownFor,
-                    ),
-                )
-            }
-        }
+        return people(results)
     }
+
+    fun popularPeople(): List<Person> =
+        people(request("/person/popular").optJSONArray("results") ?: JSONArray())
 
     fun personCredits(personId: Int): List<MediaItem> {
         val cast = request("/person/$personId/combined_credits").optJSONArray("cast") ?: JSONArray()
@@ -316,6 +299,29 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             imdbId = json.optNullableString("imdb_id")
                 ?: json.optJSONObject("external_ids")?.optNullableString("imdb_id"),
         )
+    }
+
+    private fun people(results: JSONArray): List<Person> = buildList {
+        for (index in 0 until minOf(results.length(), RESULT_LIMIT)) {
+            val person = results.optJSONObject(index) ?: continue
+            val id = person.optInt("id")
+            val name = person.optString("name")
+            if (id <= 0 || name.isBlank()) continue
+            val knownFor = person.optJSONArray("known_for")
+                .toObjectSequence()
+                .map { it.optString("title").ifBlank { it.optString("name") } }
+                .filter(String::isNotBlank)
+                .take(3)
+                .joinToString()
+            add(
+                Person(
+                    id = id,
+                    name = name,
+                    photoUrl = image(person.optNullableString("profile_path"), "w342"),
+                    knownFor = knownFor,
+                ),
+            )
+        }
     }
 
     private fun JSONObject.toCatalogProvider(region: String): CatalogProvider? {
