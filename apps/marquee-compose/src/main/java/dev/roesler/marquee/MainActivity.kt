@@ -140,10 +140,10 @@ private fun MarqueeApp(controller: MarqueeController) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 42.dp, vertical = 27.dp),
+                    .padding(horizontal = 32.dp, vertical = 20.dp),
             ) {
                 MarqueeHeader(destination, controller)
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(16.dp))
                 Box(Modifier.fillMaxSize()) {
                     when (destination) {
                         Destination.HOME -> HomeScreen(home, livePlayback, controller)
@@ -167,23 +167,23 @@ private fun MarqueeHeader(destination: Destination, controller: MarqueeControlle
     ) {
         Box(
             modifier = Modifier
-                .width(43.dp)
-                .height(43.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .width(38.dp)
+                .height(38.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(MarqueePalette.GoldDark)
                 .border(
                     1.dp,
                     MarqueePalette.Gold.copy(alpha = 0.5f),
-                    RoundedCornerShape(14.dp),
+                    RoundedCornerShape(12.dp),
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            AppText("▶", 17.sp, MarqueePalette.Gold, FontWeight.Black)
+            AppText("▶", 15.sp, MarqueePalette.Gold, FontWeight.Black)
         }
-        Spacer(Modifier.width(13.dp))
+        Spacer(Modifier.width(11.dp))
         Column {
-            AppText("MARQUEE", 20.sp, MarqueePalette.Text, FontWeight.Black)
-            AppText("Discovery, without the wandering", 10.sp, MarqueePalette.Muted)
+            AppText("MARQUEE", 18.sp, MarqueePalette.Text, FontWeight.Black)
+            AppText("Discovery, without the wandering", 9.sp, MarqueePalette.Muted)
         }
         Spacer(Modifier.weight(1f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -218,11 +218,11 @@ private fun NavItem(item: Destination, selected: Boolean, onClick: () -> Unit) {
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .focusable(interactionSource = interaction)
-            .padding(horizontal = 17.dp, vertical = 9.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         AppText(
             item.label,
-            12.sp,
+            11.sp,
             if (selected || focused) MarqueePalette.Text else MarqueePalette.Muted,
             FontWeight.Bold,
         )

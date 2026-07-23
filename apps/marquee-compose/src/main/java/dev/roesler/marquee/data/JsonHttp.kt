@@ -37,7 +37,7 @@ internal object JsonHttp {
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "Marquee/2.2.1 AndroidTV")
+            connection.setRequestProperty("User-Agent", "Marquee/2.4.0 AndroidTV")
             headers.forEach(connection::setRequestProperty)
 
             if (body != null) {

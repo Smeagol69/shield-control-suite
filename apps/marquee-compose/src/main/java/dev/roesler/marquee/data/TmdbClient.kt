@@ -18,15 +18,15 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         },
     )
 
-    fun trending(): List<MediaItem> = mediaList(request("/trending/all/week"))
+    fun trending(): List<MediaItem> = discoveryMediaList("/trending/all/week")
 
-    fun popularMovies(): List<MediaItem> = mediaList(request("/movie/popular"))
+    fun popularMovies(): List<MediaItem> = discoveryMediaList("/movie/popular")
 
-    fun popularTv(): List<MediaItem> = mediaList(request("/tv/popular"))
+    fun popularTv(): List<MediaItem> = discoveryMediaList("/tv/popular")
 
-    fun topRatedMovies(): List<MediaItem> = mediaList(request("/movie/top_rated"))
+    fun topRatedMovies(): List<MediaItem> = discoveryMediaList("/movie/top_rated")
 
-    fun nowPlaying(): List<MediaItem> = mediaList(request("/movie/now_playing"))
+    fun nowPlaying(): List<MediaItem> = discoveryMediaList("/movie/now_playing")
 
     fun catalogProviders(): List<CatalogProvider> {
         val region = settingsStore.load().region
@@ -100,8 +100,9 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 parameters["vote_count.gte"] = "100"
             }
         }
-        return mediaList(
-            request("/discover/${type.apiName}", parameters),
+        return discoveryMediaList(
+            path = "/discover/${type.apiName}",
+            parameters = parameters,
             forcedType = type,
         )
     }
@@ -247,12 +248,35 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     private fun mediaList(
         response: JSONObject,
         forcedType: MediaType? = null,
+    ): List<MediaItem> = mediaItems(response, forcedType).take(RESULT_LIMIT)
+
+    private fun discoveryMediaList(
+        path: String,
+        parameters: Map<String, String> = emptyMap(),
+        forcedType: MediaType? = null,
+    ): List<MediaItem> = collectUniquePages(
+        targetSize = DISCOVERY_RESULT_TARGET,
+        maxPages = DISCOVERY_MAX_PAGES,
+        keyOf = { item -> "${item.type.apiName}:${item.id}" },
+    ) { page ->
+        val response = request(
+            path,
+            parameters + ("page" to page.toString()),
+        )
+        PageResult(
+            items = mediaItems(response, forcedType),
+            totalPages = response.optInt("total_pages", page),
+        )
+    }
+
+    private fun mediaItems(
+        response: JSONObject,
+        forcedType: MediaType? = null,
     ): List<MediaItem> {
         val results = response.optJSONArray("results") ?: return emptyList()
         return results.toObjectSequence()
             .mapNotNull { mediaItem(it, forcedType) }
             .filter { it.posterUrl != null }
-            .take(RESULT_LIMIT)
             .toList()
     }
 
@@ -376,6 +400,8 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val BASE_URL = "https://api.themoviedb.org/3"
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val RESULT_LIMIT = 30
+        private const val DISCOVERY_RESULT_TARGET = 60
+        private const val DISCOVERY_MAX_PAGES = 4
         private const val WATCH_OPTIONS_CACHE_SIZE = 256
         private const val DEFAULT_PROVIDER_PRIORITY = 10_000
 

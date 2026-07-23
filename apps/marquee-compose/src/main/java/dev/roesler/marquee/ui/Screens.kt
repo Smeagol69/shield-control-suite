@@ -35,8 +35,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,7 +83,7 @@ fun HomeScreen(
         else -> LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 40.dp),
-            verticalArrangement = Arrangement.spacedBy(25.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             livePlayback?.let { live ->
                 item { LivePlaybackBanner(live) }
@@ -109,12 +113,7 @@ fun ProvidersScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val selected = state.selectedProvider
-    var hero by remember(selected?.id) { mutableStateOf<MediaItem?>(null) }
-    LaunchedEffect(selected?.id, state.rows) {
-        if (hero == null || state.rows.none { row -> hero in row.items }) {
-            hero = state.rows.firstOrNull()?.items?.firstOrNull()
-        }
-    }
+    val catalogActionsRequester = remember { FocusRequester() }
 
     Column(Modifier.fillMaxSize()) {
         SectionHeading(
@@ -124,13 +123,14 @@ fun ProvidersScreen(
         Spacer(Modifier.height(10.dp))
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp),
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
         ) {
             items(state.providers, key = CatalogProvider::id) { provider ->
                 ProviderTab(
                     provider = provider,
                     selected = provider.id == selected?.id,
                     installed = controller.isInstalled(provider.packageName),
+                    downFocusRequester = catalogActionsRequester,
                     onClick = { controller.selectProvider(provider) },
                 )
             }
@@ -144,19 +144,20 @@ fun ProvidersScreen(
                     .clip(RoundedCornerShape(14.dp))
                     .background(MarqueePalette.Panel)
                     .border(1.dp, MarqueePalette.Border, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 18.dp, vertical = 13.dp),
+                    .padding(horizontal = 15.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 RemoteImage(
                     url = selected.logoUrl,
                     description = selected.name,
                     modifier = Modifier
-                        .size(46.dp)
+                        .size(40.dp)
                         .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Fit,
                 )
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    AppText(selected.name, 19.sp, MarqueePalette.Text, FontWeight.Black)
+                    AppText(selected.name, 17.sp, MarqueePalette.Text, FontWeight.Black)
                     AppText(
                         "Catalog by TMDB · progress and recommendations by Trakt",
                         10.sp,
@@ -172,7 +173,11 @@ fun ProvidersScreen(
                     onClick = { controller.openCatalogProvider(selected).show(context) },
                 )
                 Spacer(Modifier.width(8.dp))
-                ActionButton("Refresh", controller::refreshProviders)
+                ActionButton(
+                    label = "Refresh",
+                    onClick = controller::refreshProviders,
+                    modifier = Modifier.focusRequester(catalogActionsRequester),
+                )
             }
             Spacer(Modifier.height(14.dp))
         }
@@ -190,20 +195,15 @@ fun ProvidersScreen(
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 40.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
                     state.notice?.let { notice ->
                         item {
                             AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
                         }
                     }
-                    hero?.let { heroItem ->
-                        item {
-                            Hero(heroItem, onOpen = { controller.openDetails(heroItem) })
-                        }
-                    }
                     items(state.rows, key = MediaRow::title) { row ->
-                        MediaShelf(row, controller, onFocused = { hero = it })
+                        MediaShelf(row, controller, onFocused = {})
                     }
                 }
             }
@@ -283,17 +283,20 @@ private fun ProviderTab(
     provider: CatalogProvider,
     selected: Boolean,
     installed: Boolean,
+    downFocusRequester: FocusRequester,
     onClick: () -> Unit,
 ) {
     FocusBox(
         onClick = onClick,
-        modifier = Modifier.width(170.dp),
+        modifier = Modifier
+            .width(152.dp)
+            .focusProperties { down = downFocusRequester },
         focusedScale = 1.03f,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(58.dp)
+                .height(54.dp)
                 .clip(RoundedCornerShape(11.dp))
                 .background(
                     if (selected) MarqueePalette.GoldDark else MarqueePalette.PanelSolid,
@@ -314,13 +317,14 @@ private fun ProviderTab(
                 url = provider.logoUrl,
                 description = provider.name,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(32.dp)
                     .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Fit,
             )
             Spacer(Modifier.width(9.dp))
             AppText(
                 provider.name,
-                11.sp,
+                10.sp,
                 if (selected) MarqueePalette.Text else MarqueePalette.Muted,
                 FontWeight.Bold,
                 maxLines = 2,
@@ -344,7 +348,7 @@ private fun Hero(item: MediaItem, onOpen: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(285.dp)
+            .height(245.dp)
             .clip(RoundedCornerShape(20.dp))
             .border(1.dp, MarqueePalette.Border, RoundedCornerShape(20.dp)),
     ) {
@@ -369,15 +373,15 @@ private fun Hero(item: MediaItem, onOpen: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .width(560.dp)
-                .padding(30.dp),
+                .width(500.dp)
+                .padding(25.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             AppText("FEATURED", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
             Spacer(Modifier.height(8.dp))
             AppText(
                 item.title,
-                34.sp,
+                30.sp,
                 MarqueePalette.Text,
                 FontWeight.Black,
                 maxLines = 2,
@@ -388,16 +392,16 @@ private fun Hero(item: MediaItem, onOpen: () -> Unit) {
                 listOf(item.year, "★ %.1f".format(item.rating))
                     .filter(String::isNotBlank)
                     .joinToString("  ·  "),
-                13.sp,
+                12.sp,
                 MarqueePalette.Gold,
                 FontWeight.Bold,
             )
             Spacer(Modifier.height(9.dp))
             AppText(
                 item.overview.ifBlank { "Open for details, recommendations, and provider options." },
-                13.sp,
+                12.sp,
                 MarqueePalette.Muted,
-                maxLines = 3,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(15.dp))
@@ -415,10 +419,10 @@ private fun MediaShelf(
     val context = androidx.compose.ui.platform.LocalContext.current
     Column {
         SectionHeading(row.title, row.subtitle ?: "${row.items.size} titles")
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 7.dp),
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 7.dp),
         ) {
             items(row.items, key = { "${it.type.apiName}:${it.id}" }) { item ->
                 MediaPoster(
@@ -510,7 +514,7 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
 @Composable
 private fun MediaGrid(items: List<MediaItem>, controller: MarqueeController) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(150.dp),
+        columns = GridCells.Adaptive(138.dp),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 40.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -926,7 +930,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 46.dp),
+                .padding(horizontal = 36.dp),
             contentPadding = PaddingValues(top = 30.dp, bottom = 50.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
@@ -939,10 +943,11 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                         url = media.posterUrl,
                         description = media.title,
                         modifier = Modifier
-                            .width(170.dp)
-                            .height(245.dp)
+                            .width(150.dp)
+                            .height(225.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .border(1.dp, MarqueePalette.Border, RoundedCornerShape(14.dp)),
+                        contentScale = ContentScale.Fit,
                     )
                     Column(
                         modifier = Modifier
@@ -951,7 +956,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                     ) {
                         AppText(
                             media.title,
-                            38.sp,
+                            34.sp,
                             MarqueePalette.Text,
                             FontWeight.Black,
                             maxLines = 2,
@@ -1095,7 +1100,7 @@ private fun ProviderCard(
     val installed = controller.isInstalled(provider.packageName)
     FocusBox(
         onClick = onClick,
-        modifier = Modifier.width(132.dp),
+        modifier = Modifier.width(120.dp),
         focusedScale = 1.06f,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1103,8 +1108,9 @@ private fun ProviderCard(
                 url = provider.logoUrl,
                 description = provider.name,
                 modifier = Modifier
-                    .size(76.dp)
+                    .size(68.dp)
                     .clip(RoundedCornerShape(15.dp)),
+                contentScale = ContentScale.Fit,
             )
             Spacer(Modifier.height(8.dp))
             AppText(

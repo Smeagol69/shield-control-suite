@@ -9,6 +9,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,6 +40,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -73,36 +75,37 @@ fun MediaPoster(
     onFocused: (MediaItem) -> Unit = {},
 ) {
     FocusBox(
-        modifier = modifier.width(142.dp),
+        modifier = modifier.width(120.dp),
         onClick = onClick,
         onFocused = { onFocused(item) },
         shape = RoundedCornerShape(12.dp),
-        focusedScale = 1.07f,
+        focusedScale = 1.05f,
     ) {
         Column {
             Box(
                 modifier = Modifier
-                    .width(142.dp)
-                    .height(204.dp)
+                    .fillMaxWidth()
+                    .aspectRatio(2f / 3f)
                     .clip(RoundedCornerShape(10.dp)),
             ) {
                 RemoteImage(
                     url = item.posterUrl,
                     description = item.title,
                     modifier = Modifier.matchParentSize(),
+                    contentScale = ContentScale.Fit,
                 )
                 if (item.rating > 0.0) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(7.dp)
+                            .padding(6.dp)
                             .clip(RoundedCornerShape(50))
                             .background(Color(0xE6111318))
-                            .padding(horizontal = 7.dp, vertical = 4.dp),
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
                     ) {
                         AppText(
                             text = "★ %.1f".format(item.rating),
-                            size = 10.sp,
+                            size = 9.sp,
                             color = MarqueePalette.Gold,
                             weight = FontWeight.Bold,
                         )
@@ -125,10 +128,10 @@ fun MediaPoster(
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             AppText(
                 text = item.title,
-                size = 13.sp,
+                size = 12.sp,
                 color = MarqueePalette.Text,
                 weight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -138,7 +141,7 @@ fun MediaPoster(
                 text = item.contextLabel ?: listOf(item.year, item.type.apiName.uppercase())
                     .filter(String::isNotBlank)
                     .joinToString(" · "),
-                size = 10.sp,
+                size = 9.sp,
                 color = if (item.progressPercent != null) {
                     MarqueePalette.Gold
                 } else {
@@ -154,7 +157,7 @@ fun MediaPoster(
 @Composable
 fun PersonPoster(person: Person, onClick: () -> Unit, modifier: Modifier = Modifier) {
     FocusBox(
-        modifier = modifier.width(156.dp),
+        modifier = modifier.width(132.dp),
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
     ) {
@@ -163,14 +166,14 @@ fun PersonPoster(person: Person, onClick: () -> Unit, modifier: Modifier = Modif
                 url = person.photoUrl,
                 description = person.name,
                 modifier = Modifier
-                    .width(156.dp)
-                    .height(156.dp)
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
                     .clip(RoundedCornerShape(12.dp)),
             )
             Spacer(Modifier.height(8.dp))
             AppText(
                 person.name,
-                13.sp,
+                12.sp,
                 MarqueePalette.Text,
                 FontWeight.Bold,
                 maxLines = 1,
@@ -225,12 +228,12 @@ fun ActionButton(
                 onClick = onClick,
             )
             .focusable(enabled = enabled, interactionSource = interaction)
-            .padding(horizontal = 17.dp, vertical = 11.dp),
+            .padding(horizontal = 15.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
         AppText(
             text = label,
-            size = 13.sp,
+            size = 12.sp,
             color = if (enabled) MarqueePalette.Text else MarqueePalette.Muted.copy(alpha = 0.5f),
             weight = FontWeight.Bold,
         )
@@ -297,10 +300,10 @@ fun SectionHeading(title: String, subtitle: String? = null) {
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Bottom,
     ) {
-        AppText(title, 20.sp, MarqueePalette.Text, FontWeight.ExtraBold)
+        AppText(title, 18.sp, MarqueePalette.Text, FontWeight.ExtraBold)
         subtitle?.let {
             Spacer(Modifier.width(10.dp))
-            AppText(it, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
+            AppText(it, 10.sp, MarqueePalette.Muted, FontWeight.Medium)
         }
     }
 }
@@ -376,7 +379,7 @@ fun FocusBox(
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .focusable(interactionSource = interaction)
-            .padding(if (focused) 4.dp else 6.dp),
+            .padding(5.dp),
     ) {
         content()
     }

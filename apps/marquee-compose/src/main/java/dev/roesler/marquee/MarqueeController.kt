@@ -1353,17 +1353,26 @@ class MarqueeController(context: Context) {
         private const val MOVIE_GENRE_COMEDY = 35
         private const val MOVIE_GENRE_FAMILY = 10_751
         private const val MOVIE_GENRE_ACTION = 28
+        private const val MOVIE_GENRE_ADVENTURE = 12
+        private const val MOVIE_GENRE_FANTASY = 14
         private const val MOVIE_GENRE_SCIFI = 878
         private const val MOVIE_GENRE_HORROR = 27
+        private const val MOVIE_GENRE_THRILLER = 53
+        private const val MOVIE_GENRE_ROMANCE = 10_749
+        private const val TV_GENRE_ACTION_ADVENTURE = 10_759
+        private const val TV_GENRE_SCIFI_FANTASY = 10_765
+        private const val TV_GENRE_KIDS = 10_762
+        private const val GENRE_CRIME = 80       // shared movie/TV id
+        private const val GENRE_MYSTERY = 9_648  // shared movie/TV id
         private const val GENRE_DRAMA = 18       // shared movie/TV id
         private const val GENRE_DOCUMENTARY = 99 // shared movie/TV id
         private const val GENRE_ANIMATION = 16   // shared movie/TV id
         private const val PLAYBACK_FILTER_LIMIT = 18
         private const val RECOMMENDATION_FILTER_LIMIT = 14
         private const val AVAILABILITY_CONCURRENCY = 4
-        private const val PROVIDER_DISCOVERY_CONCURRENCY = 4
-        private const val PROVIDER_CACHE_ENTRIES = 12
-        private const val PROVIDER_CACHE_TTL_MS = 15L * 60L * 1_000L
+        private const val PROVIDER_DISCOVERY_CONCURRENCY = 3
+        private const val PROVIDER_CACHE_ENTRIES = 6
+        private const val PROVIDER_CACHE_TTL_MS = 30L * 60L * 1_000L
         private const val LOCAL_PLAYBACK_LIMIT = 30
         private const val LIVE_REFRESH_INTERVAL_MS = 1_000L
         private const val LIVE_SESSION_MAX_AGE_MS = 15_000L
@@ -1394,6 +1403,18 @@ class MarqueeController(context: Context) {
                 MOVIE_GENRE_ACTION,
             ),
             ProviderShelfSpec(
+                "Adventure",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_ADVENTURE,
+            ),
+            ProviderShelfSpec(
+                "Fantasy",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_FANTASY,
+            ),
+            ProviderShelfSpec(
                 "Sci-Fi",
                 MediaType.MOVIE,
                 ProviderSort.POPULAR,
@@ -1406,10 +1427,70 @@ class MarqueeController(context: Context) {
                 MOVIE_GENRE_HORROR,
             ),
             ProviderShelfSpec(
+                "Thrillers",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_THRILLER,
+            ),
+            ProviderShelfSpec(
+                "Mysteries",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_MYSTERY,
+            ),
+            ProviderShelfSpec(
+                "Crime movies",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_CRIME,
+            ),
+            ProviderShelfSpec(
+                "Romance",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_ROMANCE,
+            ),
+            ProviderShelfSpec(
                 "Drama series",
                 MediaType.TV,
                 ProviderSort.POPULAR,
                 GENRE_DRAMA,
+            ),
+            ProviderShelfSpec(
+                "Action & adventure series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                TV_GENRE_ACTION_ADVENTURE,
+            ),
+            ProviderShelfSpec(
+                "Sci-Fi & fantasy series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                TV_GENRE_SCIFI_FANTASY,
+            ),
+            ProviderShelfSpec(
+                "Crime series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                GENRE_CRIME,
+            ),
+            ProviderShelfSpec(
+                "Comedy series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_COMEDY,
+            ),
+            ProviderShelfSpec(
+                "Mystery series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                GENRE_MYSTERY,
+            ),
+            ProviderShelfSpec(
+                "Kids series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                TV_GENRE_KIDS,
             ),
             ProviderShelfSpec(
                 "Documentaries",

@@ -13,7 +13,7 @@ AdGuard package, and SHA-256 checksums.
 | Component | Source version | Purpose |
 | --- | --- | --- |
 | Shield Control | 1.1.0 | Standalone Windows control center with bundled ADB and scrcpy |
-| Marquee | 2.3.0 | Native Android TV discovery, provider, Trakt, and playback hub |
+| Marquee | 2.4.0 | Native Android TV discovery, provider, Trakt, and playback hub |
 | Shield Hooks | 0.2.0 | Package-scoped LSPosed observation and constrained BeanShell automation |
 | AdGuard Home service | 0.107.78 | Boot-persistent whole-home DNS filtering on the Shield |
 
@@ -30,9 +30,9 @@ AdGuard package, and SHA-256 checksums.
 | `release` | Release inventory and reproducible SHA-256 manifest. |
 
 Shield Control 1.1 routes pulls, screenshots, and Kodi logs to the collision-safe
-`Downloads\KodiDrop` folder and can download whole device folders. Marquee 2.3
-keeps Claude's expanded provider shelves responsive with a bounded, expiring
-catalog cache that avoids repeatedly hammering TMDB.
+`Downloads\KodiDrop` folder and can download whole device folders. Marquee 2.4
+loads up to 60 unique poster titles per discovery shelf across 26 provider
+categories, backed by a bounded, expiring catalog cache.
 
 Each project has its own README with setup, operation, and safety details.
 
