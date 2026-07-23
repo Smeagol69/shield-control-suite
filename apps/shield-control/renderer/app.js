@@ -16,6 +16,7 @@ const els = {
   navchips: $('#navchips'),
   listing: $('#listing'),
   upBtn: $('#upBtn'),
+  openDownloadsBtn: $('#openDownloadsBtn'),
   refreshBtn: $('#refreshBtn'),
   veil: $('#veil'),
   vtDownload: $('#vtDownload'),
@@ -828,19 +829,16 @@ function renderEntries(entries) {
 
     const actions = document.createElement('span');
     actions.className = 'actions';
-    if (e.type === 'dir') {
-      row.addEventListener('click', () => refresh(e.path));
-    } else {
-      const pull = document.createElement('button');
-      pull.className = 'pull';
-      pull.title = 'Download to this PC';
-      pull.innerHTML = SVG_DOWNLOAD;
-      pull.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        window.shield.pull(e.path, e.name, e.size);
-      });
-      actions.append(pull);
-    }
+    if (e.type === 'dir') row.addEventListener('click', () => refresh(e.path));
+    const pull = document.createElement('button');
+    pull.className = 'pull';
+    pull.title = `Download ${e.type === 'dir' ? 'folder' : 'file'} to ${cfg.pullDir}`;
+    pull.innerHTML = SVG_DOWNLOAD;
+    pull.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      window.shield.pull(e.path, e.name, e.size, e.type);
+    });
+    actions.append(pull);
     actions.append(makeDeleteButton(e));
     row.append(actions);
     els.listing.append(row);
@@ -887,6 +885,10 @@ function makeDeleteButton(entry) {
 
 els.upBtn.addEventListener('click', () => {
   if (currentDir !== '/') refresh(currentDir.split('/').slice(0, -1).join('/') || '/');
+});
+els.openDownloadsBtn.addEventListener('click', async () => {
+  const result = await window.shield.openDownloads();
+  if (!result.ok) toast(result.error || 'Could not open the KodiDrop folder');
 });
 els.refreshBtn.addEventListener('click', () => refresh(currentDir));
 

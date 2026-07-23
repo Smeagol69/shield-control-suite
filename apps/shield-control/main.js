@@ -4,6 +4,7 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const { spawn, execFile, execFileSync } = require('child_process');
+const { resolvePullRoot, sanitizeName, uniqueLocalPath } = require('./lib/transfer-paths');
 
 // ---------------------------------------------------------------------------
 // Bundled binaries (vendor/ ships next to the app via electron-builder
@@ -31,7 +32,7 @@ const DEFAULTS = {
   lastDir: '/sdcard/Download',
   pushDir: '/sdcard/Download',            // default landing folder for dropped files
   kodiDropDir: '/sdcard/Download/KodiDrop',
-  pullDir: null,                          // null → this PC's Downloads folder
+  pullDir: null,                          // null → this PC's Downloads\KodiDrop folder
   backupDir: '/sdcard/backup',            // scanned for "last backup" status
   scrcpyBitrate: '8M',                    // lower = lower latency over WiFi (e.g. '4M'); higher = sharper
   bounds: null,
@@ -1147,26 +1148,12 @@ function enqueueBundleInstall(bundlePath, serial) {
 }
 
 // ---------------------------------------------------------------------------
-// Pulls — no dialogs: everything lands in the PC's Downloads folder
+// Pulls — no dialogs: everything lands in the PC's Downloads\KodiDrop folder
 // ---------------------------------------------------------------------------
-const sanitizeName = (n) => String(n).replace(/[<>:"/\\|?*]/g, '_');
-
 function resolvePullDir() {
-  const d = config.pullDir || app.getPath('downloads');
+  const d = resolvePullRoot(app.getPath('downloads'), config.pullDir);
   try { fs.mkdirSync(d, { recursive: true }); } catch {}
   return d;
-}
-
-function uniqueLocalPath(dir, name) {
-  let p = path.join(dir, name);
-  if (!fs.existsSync(p)) return p;
-  const ext = path.extname(name);
-  const base = name.slice(0, name.length - ext.length);
-  for (let i = 1; i < 1000; i++) {
-    p = path.join(dir, `${base} (${i})${ext}`);
-    if (!fs.existsSync(p)) return p;
-  }
-  return path.join(dir, `${base}-${Date.now()}${ext}`);
 }
 
 // stream `adb exec-out <cmd>` straight into a local file (binary-safe),
@@ -1200,21 +1187,33 @@ function execOutToFile(serial, cmdArgs, local, size, report) {
   });
 }
 
-function handlePull({ remotePath, name, size }) {
+function handlePull({ remotePath, name, size, type }) {
   if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
   if (typeof remotePath !== 'string' || !remotePath.startsWith('/')) return { ok: false, error: 'bad path' };
   const serial = state.serial;
   const expected = Number(size) > 0 ? Number(size) : 0;
+  const isDirectory = type === 'dir';
   enqueue({
     kind: 'pull',
     name: path.posix.basename(remotePath),
+    indeterminate: isDirectory,
     run: async (report) => {
       // resolve the local name at run time — queued same-name pulls each get a fresh slot
-      const local = uniqueLocalPath(resolvePullDir(), sanitizeName(name || path.posix.basename(remotePath)));
+      const local = uniqueLocalPath(
+        resolvePullDir(),
+        sanitizeName(name || path.posix.basename(remotePath)),
+        { isDirectory },
+      );
       const { code, tail } = await spawnAdbProgress(['-s', serial, 'pull', remotePath, local], report);
-      if (code === 0) return { ok: true, detail: `Saved to ${local}`, localPath: local };
+      if (code === 0) {
+        return {
+          ok: true,
+          detail: `${isDirectory ? 'Folder saved' : 'Saved'} to ${local}`,
+          localPath: local,
+        };
+      }
       // scoped-storage paths deny adb's sync service — root cat gets through
-      if (/permission denied|failed to stat/i.test(tail)) {
+      if (!isDirectory && /permission denied|failed to stat/i.test(tail)) {
         if (rootAvailable === null) await checkRoot();
         if (rootAvailable) {
           const r2 = await execOutToFile(serial, ['su', '-c', `cat ${shq(rootPath(remotePath))}`], local, expected, report);
@@ -1222,6 +1221,7 @@ function handlePull({ remotePath, name, size }) {
           return r2;
         }
       }
+      try { fs.rmSync(local, { recursive: true, force: true }); } catch {}
       return { ok: false, detail: lastLine(tail) || 'pull failed' };
     },
   });
@@ -1370,7 +1370,7 @@ function registerIpc() {
   ipcMain.handle('config:get', () => ({
     pushDir: config.pushDir,
     kodiDropDir: config.kodiDropDir,
-    pullDir: config.pullDir || app.getPath('downloads'),
+    pullDir: resolvePullDir(),
     backupDir: config.backupDir,
   }));
   ipcMain.handle('status:get', () => ({ ...status }));
@@ -1412,6 +1412,10 @@ function registerIpc() {
   ipcMain.handle('fs:list', (_e, p) => listDir(p));
   ipcMain.handle('fs:home', () => config.lastDir || config.pushDir);
   ipcMain.handle('fs:pull', (_e, payload) => handlePull(payload || {}));
+  ipcMain.handle('downloads:open', async () => {
+    const error = await shell.openPath(resolvePullDir());
+    return error ? { ok: false, error } : { ok: true };
+  });
   ipcMain.handle('fs:send', async (_e, { paths, remoteDir } = {}) => {
     if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Shield is not connected' };
     const serial = state.serial;

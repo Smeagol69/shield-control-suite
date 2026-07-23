@@ -15,6 +15,9 @@ legacy package ID `dev.roesler.marquee`.
 - A provider hub inspired by native TV launchers: live regional provider tabs,
   installed apps first, and provider-filtered popular, new, top-rated, family,
   and comedy shelves.
+- A 15-minute in-memory provider-catalog cache with bounded four-request
+  concurrency, making repeat provider switches immediate while reducing TMDB
+  rate-limit pressure. The on-screen Refresh action bypasses the cache.
 - Trakt device authorization, automatic token refresh, personalized movie/show
   recommendations, synced watchlist, playback progress, recent history, and
   explicit watchlist/mark-watched actions.
@@ -81,7 +84,7 @@ progress, but cannot provide exact local progress through this interface.
 
 ## Legacy upgrade
 
-The native app uses version code 5 and the same application ID as the legacy
+The native app uses version code 7 and the same application ID as the legacy
 WebView build. Android permits an in-place upgrade only when both APKs use the
 same signing certificate.
 

@@ -20,7 +20,9 @@ contextBridge.exposeInMainWorld('shield', {
 
   listDir: (p) => ipcRenderer.invoke('fs:list', p),
   homeDir: () => ipcRenderer.invoke('fs:home'),
-  pull: (remotePath, name, size) => ipcRenderer.invoke('fs:pull', { remotePath, name, size }),
+  pull: (remotePath, name, size, type) =>
+    ipcRenderer.invoke('fs:pull', { remotePath, name, size, type }),
+  openDownloads: () => ipcRenderer.invoke('downloads:open'),
   send: (paths, remoteDir) => ipcRenderer.invoke('fs:send', { paths, remoteDir }),
   deletePath: (remotePath) => ipcRenderer.invoke('fs:delete', remotePath),
   execShell: (cmd, root) => ipcRenderer.invoke('shell:exec', { cmd, root }),

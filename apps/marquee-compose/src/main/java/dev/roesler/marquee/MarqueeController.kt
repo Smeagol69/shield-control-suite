@@ -5,6 +5,7 @@ import android.content.Context
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import dev.roesler.marquee.data.CatalogProvider
+import dev.roesler.marquee.data.ExpiringLruCache
 import dev.roesler.marquee.data.MarqueeSettings
 import dev.roesler.marquee.data.MediaDetails
 import dev.roesler.marquee.data.MediaItem
@@ -152,6 +153,10 @@ class MarqueeController(context: Context) {
     private val launcher = ProviderLauncher(appContext)
     private val playbackStore = PlaybackStore(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val providerDiscoveryCache = ExpiringLruCache<String, ProviderLoad>(
+        maxEntries = PROVIDER_CACHE_ENTRIES,
+        ttlMillis = PROVIDER_CACHE_TTL_MS,
+    )
 
     private var homeJob: Job? = null
     private var providerJob: Job? = null
@@ -290,6 +295,7 @@ class MarqueeController(context: Context) {
             )
             return
         }
+        providerDiscoveryCache.clear()
         providerJob?.cancel()
         providerJob = scope.launch {
             _providers.value = _providers.value.copy(
@@ -560,6 +566,7 @@ class MarqueeController(context: Context) {
             previous.region != normalized.region
         ) {
             providerJob?.cancel()
+            providerDiscoveryCache.clear()
             _providers.value = ProvidersUiState()
         }
         if (traktCredentialsChanged || normalized.traktClientId.isBlank()) {
@@ -864,101 +871,7 @@ class MarqueeController(context: Context) {
 
     private suspend fun buildProviderCatalog(provider: CatalogProvider): ProviderLoad =
         coroutineScope {
-            fun discoveryRow(
-                title: String,
-                type: MediaType,
-                sort: ProviderSort,
-                genreId: Int? = null,
-            ) = async {
-                serviceResult {
-                    MediaRow(
-                        title = title,
-                        items = tmdbClient.providerTitles(provider.id, type, sort, genreId),
-                        subtitle = "${provider.name} · ${_settings.value.region}",
-                    )
-                }
-            }
-
-            val discoveryTasks = listOf(
-                "Popular movies" to discoveryRow(
-                    "Popular movies",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                ),
-                "Popular series" to discoveryRow(
-                    "Popular series",
-                    MediaType.TV,
-                    ProviderSort.POPULAR,
-                ),
-                "New movies" to discoveryRow(
-                    "New movies",
-                    MediaType.MOVIE,
-                    ProviderSort.NEWEST,
-                ),
-                "New series" to discoveryRow(
-                    "New series",
-                    MediaType.TV,
-                    ProviderSort.NEWEST,
-                ),
-                "Top rated movies" to discoveryRow(
-                    "Top rated movies",
-                    MediaType.MOVIE,
-                    ProviderSort.TOP_RATED,
-                ),
-                "Top rated series" to discoveryRow(
-                    "Top rated series",
-                    MediaType.TV,
-                    ProviderSort.TOP_RATED,
-                ),
-                "Family night" to discoveryRow(
-                    "Family night",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_FAMILY,
-                ),
-                "Comedy" to discoveryRow(
-                    "Comedy",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_COMEDY,
-                ),
-                "Action" to discoveryRow(
-                    "Action",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_ACTION,
-                ),
-                "Sci-Fi" to discoveryRow(
-                    "Sci-Fi",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_SCIFI,
-                ),
-                "Horror" to discoveryRow(
-                    "Horror",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_HORROR,
-                ),
-                "Drama series" to discoveryRow(
-                    "Drama series",
-                    MediaType.TV,
-                    ProviderSort.POPULAR,
-                    GENRE_DRAMA,
-                ),
-                "Documentaries" to discoveryRow(
-                    "Documentaries",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    GENRE_DOCUMENTARY,
-                ),
-                "Animation" to discoveryRow(
-                    "Animation",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    GENRE_ANIMATION,
-                ),
-            )
+            val discoveryTask = async { loadProviderDiscovery(provider) }
 
             val includeTrakt = _trakt.value.connected
             val playbackTask = includeTrakt.takeIf { it }?.let {
@@ -979,15 +892,9 @@ class MarqueeController(context: Context) {
                     )
                 }
                 .orEmpty()
-            val discoveryRows = discoveryTasks.mapNotNull { (label, task) ->
-                task.await().fold(
-                    onSuccess = { it.takeIf { row -> row.items.isNotEmpty() } },
-                    onFailure = {
-                        warnings += "$label unavailable"
-                        null
-                    },
-                )
-            }
+            val discovery = discoveryTask.await()
+            warnings += discovery.warnings
+            val discoveryRows = discovery.rows
 
             val personalizedRows = mutableListOf<MediaRow>()
             localPlayback.takeIf(List<MediaItem>::isNotEmpty)?.let {
@@ -1049,6 +956,49 @@ class MarqueeController(context: Context) {
                 warnings = warnings,
             )
         }
+
+    private suspend fun loadProviderDiscovery(provider: CatalogProvider): ProviderLoad {
+        val region = _settings.value.region
+        val cacheKey = "$region:${provider.id}"
+        providerDiscoveryCache.get(cacheKey)?.let { return it }
+
+        val results = PROVIDER_SHELVES
+            .chunked(PROVIDER_DISCOVERY_CONCURRENCY)
+            .flatMap { chunk ->
+                coroutineScope {
+                    chunk.map { shelf ->
+                        async {
+                            shelf to serviceResult {
+                                MediaRow(
+                                    title = shelf.title,
+                                    items = tmdbClient.providerTitles(
+                                        providerId = provider.id,
+                                        type = shelf.type,
+                                        sort = shelf.sort,
+                                        genreId = shelf.genreId,
+                                    ),
+                                    subtitle = "${provider.name} · $region",
+                                )
+                            }
+                        }
+                    }.awaitAll()
+                }
+            }
+
+        val warnings = mutableListOf<String>()
+        val rows = results.mapNotNull { (shelf, result) ->
+            result.fold(
+                onSuccess = { row -> row.takeIf { it.items.isNotEmpty() } },
+                onFailure = {
+                    warnings += "${shelf.title} unavailable"
+                    null
+                },
+            )
+        }
+        return ProviderLoad(rows = rows, warnings = warnings).also {
+            providerDiscoveryCache.put(cacheKey, it)
+        }
+    }
 
     private suspend fun availableOnProvider(
         items: List<MediaItem>,
@@ -1392,6 +1342,13 @@ class MarqueeController(context: Context) {
         val warnings: List<String>,
     )
 
+    private data class ProviderShelfSpec(
+        val title: String,
+        val type: MediaType,
+        val sort: ProviderSort,
+        val genreId: Int? = null,
+    )
+
     companion object {
         private const val MOVIE_GENRE_COMEDY = 35
         private const val MOVIE_GENRE_FAMILY = 10_751
@@ -1404,10 +1361,69 @@ class MarqueeController(context: Context) {
         private const val PLAYBACK_FILTER_LIMIT = 18
         private const val RECOMMENDATION_FILTER_LIMIT = 14
         private const val AVAILABILITY_CONCURRENCY = 4
+        private const val PROVIDER_DISCOVERY_CONCURRENCY = 4
+        private const val PROVIDER_CACHE_ENTRIES = 12
+        private const val PROVIDER_CACHE_TTL_MS = 15L * 60L * 1_000L
         private const val LOCAL_PLAYBACK_LIMIT = 30
         private const val LIVE_REFRESH_INTERVAL_MS = 1_000L
         private const val LIVE_SESSION_MAX_AGE_MS = 15_000L
         private const val LIVE_ROW_TITLE = "Playing now"
+        private val PROVIDER_SHELVES = listOf(
+            ProviderShelfSpec("Popular movies", MediaType.MOVIE, ProviderSort.POPULAR),
+            ProviderShelfSpec("Popular series", MediaType.TV, ProviderSort.POPULAR),
+            ProviderShelfSpec("New movies", MediaType.MOVIE, ProviderSort.NEWEST),
+            ProviderShelfSpec("New series", MediaType.TV, ProviderSort.NEWEST),
+            ProviderShelfSpec("Top rated movies", MediaType.MOVIE, ProviderSort.TOP_RATED),
+            ProviderShelfSpec("Top rated series", MediaType.TV, ProviderSort.TOP_RATED),
+            ProviderShelfSpec(
+                "Family night",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_FAMILY,
+            ),
+            ProviderShelfSpec(
+                "Comedy",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_COMEDY,
+            ),
+            ProviderShelfSpec(
+                "Action",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_ACTION,
+            ),
+            ProviderShelfSpec(
+                "Sci-Fi",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_SCIFI,
+            ),
+            ProviderShelfSpec(
+                "Horror",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_HORROR,
+            ),
+            ProviderShelfSpec(
+                "Drama series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                GENRE_DRAMA,
+            ),
+            ProviderShelfSpec(
+                "Documentaries",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_DOCUMENTARY,
+            ),
+            ProviderShelfSpec(
+                "Animation",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_ANIMATION,
+            ),
+        )
         private val ANDROID_PACKAGE =
             Regex("""^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$""")
     }
