@@ -100,7 +100,7 @@ private object ImageCache {
             connection.instanceFollowRedirects = false
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("User-Agent", "Marquee/2.4.0 AndroidTV")
+            connection.setRequestProperty("User-Agent", "Marquee/2.5.0 AndroidTV")
             if (connection.responseCode !in 200..299) return null
             val length = connection.contentLengthLong
             if (length > MAX_IMAGE_BYTES) return null

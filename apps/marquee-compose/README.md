@@ -13,14 +13,18 @@ legacy package ID `dev.roesler.marquee`.
 - A dynamic `Because you liked …` row based on the last opened title.
 - Regional `Where to watch` data with installed-provider detection.
 - A provider hub inspired by native TV launchers: live regional provider tabs,
-  installed apps first, and 26 provider-filtered discovery categories.
+  installed apps first, 26 provider-filtered discovery categories, and
+  All/Movies/Series filters with a `Surprise me` action.
 - Paginated discovery that loads up to 60 unique poster titles per shelf instead
   of stopping at TMDB's 20-item first page.
 - A compact 16:9 TV layout with stable focus sizing, uncropped 2:3 posters,
   fit-to-card provider logos, and a larger bounded artwork cache.
-- A 30-minute in-memory provider-catalog cache with bounded three-shelf
-  concurrency, making repeat provider switches immediate while reducing TMDB
-  rate-limit pressure. The on-screen Refresh action bypasses the cache.
+- Progressive provider loading: six core shelves appear first, personalization
+  follows, and the remaining categories arrive three at a time with visible
+  progress.
+- A 30-minute, 160-entry per-shelf cache with bounded three-shelf concurrency.
+  Completed categories survive provider switches, while the on-screen Refresh
+  action clears the cache.
 - Trakt device authorization, automatic token refresh, personalized movie/show
   recommendations, synced watchlist, playback progress, recent history, and
   explicit watchlist/mark-watched actions.
@@ -88,7 +92,7 @@ progress, but cannot provide exact local progress through this interface.
 
 ## Legacy upgrade
 
-The native app uses version code 8 and the same application ID as the legacy
+The native app uses version code 9 and the same application ID as the legacy
 WebView build. Android permits an in-place upgrade only when both APKs use the
 same signing certificate.
 

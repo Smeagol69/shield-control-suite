@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('shield', {
   getState: () => ipcRenderer.invoke('shield:get-state'),
   reconnect: () => ipcRenderer.invoke('shield:reconnect'),
   getConfig: () => ipcRenderer.invoke('config:get'),
+  getUpdateState: () => ipcRenderer.invoke('update:get-state'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  updateAction: () => ipcRenderer.invoke('update:action'),
 
   getStatus: () => ipcRenderer.invoke('status:get'),
   refreshStatus: () => ipcRenderer.invoke('status:refresh'),
@@ -44,6 +47,7 @@ contextBridge.exposeInMainWorld('shield', {
   filePath: (file) => webUtils.getPathForFile(file),
 
   onState: (cb) => ipcRenderer.on('shield:state', (_e, s) => cb(s)),
+  onUpdate: (cb) => ipcRenderer.on('update:state', (_e, s) => cb(s)),
   onStatus: (cb) => ipcRenderer.on('status:update', (_e, s) => cb(s)),
   onScrcpy: (cb) => ipcRenderer.on('scrcpy:state', (_e, s) => cb(s)),
   onTransfer: (cb) => ipcRenderer.on('transfer:update', (_e, t) => cb(t)),

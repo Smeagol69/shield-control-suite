@@ -18,7 +18,19 @@ npm run dist
 
 Outputs to `dist/`:
 - `ShieldControl-<version>-portable.exe` — single standalone exe
-- `Shield Control Setup <version>.exe` — one-click installer (faster startup, Start Menu entry)
+- `Shield-Control-Setup-<version>.exe` — one-click installer (faster startup, Start Menu entry)
+- `latest.yml` and the installer blockmap — update metadata for GitHub Releases
+
+## Automatic updates
+
+The one-click installer is the recommended build. Packaged copies check the
+repository's latest GitHub Release on launch and every 15 minutes. Installed
+copies download a newer installer in the background, verify electron-builder's
+SHA-512 metadata, and offer a one-click restart when it is ready.
+
+Portable copies use the same live release check but open the release page for
+the replacement executable. They do not overwrite their own running `.exe`.
+Development and `SHIELD_SMOKE` sessions never contact the update feed.
 
 ## How it connects
 

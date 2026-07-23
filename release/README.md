@@ -8,6 +8,7 @@ The release contains:
 
 - Shield Control one-click Windows installer
 - Shield Control portable Windows executable
+- Shield Control `latest.yml` and blockmap update metadata
 - Marquee signed Android TV APK
 - Shield Hooks signed Android TV APK
 - AdGuard Home Shield deployment package

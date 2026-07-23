@@ -4,7 +4,13 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const { spawn, execFile, execFileSync } = require('child_process');
+const { autoUpdater } = require('electron-updater');
 const { resolvePullRoot, sanitizeName, uniqueLocalPath } = require('./lib/transfer-paths');
+const {
+  clampUpdatePercent,
+  detectUpdateMode,
+  updateErrorMessage,
+} = require('./lib/update-policy');
 
 // ---------------------------------------------------------------------------
 // Bundled binaries (vendor/ ships next to the app via electron-builder
@@ -148,6 +154,131 @@ const state = {
   detail: '',
   binaries,
 };
+
+// ---------------------------------------------------------------------------
+// GitHub Release updates
+// Installed NSIS builds download and apply automatically. Portable builds
+// check the same feed and link to the new release because replacing a running
+// portable executable in place is unsafe on Windows.
+// ---------------------------------------------------------------------------
+const RELEASES_URL = 'https://github.com/Smeagol69/shield-control-suite/releases/latest';
+const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+const updateMode = detectUpdateMode(app.isPackaged, process.env.PORTABLE_EXECUTABLE_FILE);
+const updateState = {
+  mode: updateMode,
+  phase: updateMode === 'development' ? 'disabled' : 'idle',
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  percent: null,
+  message: updateMode === 'development'
+    ? 'Updates are enabled in packaged builds.'
+    : 'Checking GitHub Releases automatically.',
+};
+let updateCheckBusy = false;
+let updateTimer = null;
+let firstUpdateTimer = null;
+
+function pushUpdateState(patch = {}) {
+  Object.assign(updateState, patch);
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('update:state', { ...updateState });
+  }
+}
+
+async function checkForUpdates() {
+  if (updateMode === 'development' || updateCheckBusy || process.env.SHIELD_SMOKE) {
+    return { ...updateState };
+  }
+  updateCheckBusy = true;
+  pushUpdateState({
+    phase: 'checking',
+    percent: null,
+    message: 'Checking GitHub Releases…',
+  });
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    pushUpdateState({
+      phase: 'error',
+      message: updateErrorMessage(error),
+    });
+  } finally {
+    updateCheckBusy = false;
+  }
+  return { ...updateState };
+}
+
+function configureAutoUpdates() {
+  if (updateMode === 'development' || process.env.SHIELD_SMOKE) return;
+
+  autoUpdater.autoDownload = updateMode === 'installed';
+  autoUpdater.autoInstallOnAppQuit = updateMode === 'installed';
+  autoUpdater.allowPrerelease = false;
+
+  autoUpdater.on('checking-for-update', () => {
+    pushUpdateState({ phase: 'checking', percent: null, message: 'Checking GitHub Releases…' });
+  });
+  autoUpdater.on('update-available', (info) => {
+    const version = info && info.version ? info.version : null;
+    pushUpdateState({
+      phase: updateMode === 'installed' ? 'downloading' : 'available',
+      availableVersion: version,
+      percent: updateMode === 'installed' ? 0 : null,
+      message: updateMode === 'installed'
+        ? `Downloading Shield Control ${version || 'update'}…`
+        : `Shield Control ${version || 'update'} is available.`,
+    });
+  });
+  autoUpdater.on('update-not-available', () => {
+    pushUpdateState({
+      phase: 'current',
+      availableVersion: null,
+      percent: null,
+      message: `Shield Control ${app.getVersion()} is current.`,
+    });
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    const percent = clampUpdatePercent(progress.percent);
+    pushUpdateState({
+      phase: 'downloading',
+      percent,
+      message: `Downloading update · ${percent}%`,
+    });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    const version = info && info.version ? info.version : updateState.availableVersion;
+    pushUpdateState({
+      phase: 'downloaded',
+      availableVersion: version,
+      percent: 100,
+      message: `Shield Control ${version || 'update'} is ready. Restart to install.`,
+    });
+  });
+  autoUpdater.on('error', (error) => {
+    pushUpdateState({
+      phase: 'error',
+      percent: null,
+      message: updateErrorMessage(error),
+    });
+  });
+
+  firstUpdateTimer = setTimeout(checkForUpdates, 8000);
+  updateTimer = setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
+}
+
+async function handleUpdateAction() {
+  if (updateMode === 'development') return { ok: false, error: updateState.message };
+  if (updateMode === 'portable' && updateState.phase === 'available') {
+    await shell.openExternal(RELEASES_URL);
+    return { ok: true, opened: true };
+  }
+  if (updateMode === 'installed' && updateState.phase === 'downloaded') {
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    return { ok: true, installing: true };
+  }
+  await checkForUpdates();
+  return { ok: true, checking: true };
+}
 
 function setState(patch) {
   const before = JSON.stringify(state);
@@ -1361,6 +1492,9 @@ async function runShell(cmd, asRoot) {
 // ---------------------------------------------------------------------------
 function registerIpc() {
   ipcMain.handle('shield:get-state', () => ({ ...state }));
+  ipcMain.handle('update:get-state', () => ({ ...updateState }));
+  ipcMain.handle('update:check', () => checkForUpdates());
+  ipcMain.handle('update:action', () => handleUpdateAction());
   ipcMain.handle('shield:reconnect', () => {
     propsCache.clear();
     deviceAbiCache = null; // re-probe arch in case a different device/transport settles
@@ -1519,6 +1653,7 @@ if (!gotLock) {
     console.log('[shield] scrcpy:', SCRCPY_EXE, '— found =', binaries.scrcpy);
     registerIpc();
     createWindow();
+    configureAutoUpdates();
     runAdb(['version']).then((r) => {
       const m = r.out.match(/Version ([\d.]+)/);
       hostAdbVersion = m ? m[1] : '';
@@ -1533,6 +1668,8 @@ if (!gotLock) {
 
   app.on('will-quit', () => {
     quitting = true;
+    if (firstUpdateTimer) clearTimeout(firstUpdateTimer);
+    if (updateTimer) clearInterval(updateTimer);
     flushConfigSync();
     killRemoteShell();
     try { if (trackProc) trackProc.kill(); } catch {}

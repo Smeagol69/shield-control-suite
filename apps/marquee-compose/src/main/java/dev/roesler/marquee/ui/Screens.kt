@@ -56,12 +56,14 @@ import dev.roesler.marquee.ProvidersUiState
 import dev.roesler.marquee.SearchUiState
 import dev.roesler.marquee.TraktPhase
 import dev.roesler.marquee.TraktUiState
+import dev.roesler.marquee.data.CatalogFilter
 import dev.roesler.marquee.data.CatalogProvider
 import dev.roesler.marquee.data.MarqueeSettings
 import dev.roesler.marquee.data.MediaItem
 import dev.roesler.marquee.data.MediaRow
 import dev.roesler.marquee.data.MediaRowAction
 import dev.roesler.marquee.data.WatchProvider
+import dev.roesler.marquee.data.filterCatalogRows
 import kotlinx.coroutines.delay
 
 @Composable
@@ -114,6 +116,9 @@ fun ProvidersScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val selected = state.selectedProvider
     val catalogActionsRequester = remember { FocusRequester() }
+    val displayedRows = remember(state.rows, state.filter) {
+        filterCatalogRows(state.rows, state.filter)
+    }
 
     Column(Modifier.fillMaxSize()) {
         SectionHeading(
@@ -181,6 +186,42 @@ fun ProvidersScreen(
             }
             Spacer(Modifier.height(14.dp))
         }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CatalogFilter.entries.forEach { filter ->
+                ActionButton(
+                    label = filter.label,
+                    primary = state.filter == filter,
+                    onClick = { controller.setProviderFilter(filter) },
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            if (state.totalCategoryCount > 0) {
+                AppText(
+                    text = if (state.loading) {
+                        "Loading ${state.loadedCategoryCount}/${state.totalCategoryCount} categories"
+                    } else {
+                        "${state.totalCategoryCount} categories"
+                    },
+                    size = 10.sp,
+                    color = MarqueePalette.Muted,
+                    weight = FontWeight.Bold,
+                )
+            }
+            ActionButton(
+                label = "Surprise me",
+                enabled = displayedRows.isNotEmpty(),
+                onClick = {
+                    if (!controller.surpriseMe()) {
+                        Toast.makeText(context, "No titles match this filter yet.", Toast.LENGTH_SHORT).show()
+                    }
+                },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
         livePlayback?.let {
             LivePlaybackBanner(it)
             Spacer(Modifier.height(12.dp))
@@ -192,6 +233,8 @@ fun ProvidersScreen(
                     BusyState("Building ${selected?.name ?: "provider"} categories")
                 state.error != null && state.rows.isEmpty() ->
                     EmptyState("Provider catalog unavailable", state.error)
+                displayedRows.isEmpty() ->
+                    EmptyState("No matching titles", "Try another catalog filter.")
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 40.dp),
@@ -202,7 +245,7 @@ fun ProvidersScreen(
                             AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
                         }
                     }
-                    items(state.rows, key = MediaRow::title) { row ->
+                    items(displayedRows, key = MediaRow::title) { row ->
                         MediaShelf(row, controller, onFocused = {})
                     }
                 }
