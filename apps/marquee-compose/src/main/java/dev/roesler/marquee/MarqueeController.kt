@@ -481,6 +481,14 @@ class MarqueeController(context: Context) {
         _detail.value = DetailUiState()
     }
 
+    /** Jump from a detail-screen cast member to the People tab showing their filmography. */
+    fun openPersonFilmography(person: Person) {
+        closeDetails()
+        _people.value = PeopleUiState(selectedName = person.name)
+        _destination.value = Destination.PEOPLE
+        selectPerson(person)
+    }
+
     fun toggleWatchlist(): Boolean {
         val item = currentItem() ?: return false
         val saved = watchlistStore.toggle(item)

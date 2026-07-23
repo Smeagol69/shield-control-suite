@@ -40,6 +40,7 @@ data class MediaDetails(
     val genres: List<String>,
     val runtimeMinutes: Int?,
     val seasons: Int?,
+    val cast: List<Person> = emptyList(),
 )
 
 data class WatchProvider(
