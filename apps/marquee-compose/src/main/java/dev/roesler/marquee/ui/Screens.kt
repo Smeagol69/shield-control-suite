@@ -1111,6 +1111,24 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                 }
             }
 
+            val castMembers = state.details?.cast.orEmpty()
+            if (castMembers.isNotEmpty()) {
+                item { SectionHeading("Cast", "Select an actor for their filmography") }
+                item {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(vertical = 7.dp),
+                    ) {
+                        items(castMembers) { person ->
+                            PersonPoster(
+                                person,
+                                onClick = { controller.openPersonFilmography(person) },
+                            )
+                        }
+                    }
+                }
+            }
+
             if (state.recommendations.isNotEmpty()) {
                 item { SectionHeading("More like this") }
                 item {

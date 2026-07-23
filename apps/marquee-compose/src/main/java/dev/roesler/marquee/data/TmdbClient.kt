@@ -176,7 +176,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun details(item: MediaItem): MediaDetails {
         val json = request(
             "/${item.type.apiName}/${item.id}",
-            mapOf("append_to_response" to "external_ids"),
+            mapOf("append_to_response" to "external_ids,credits"),
         )
         val normalized = mediaItem(json, item.type) ?: item
         val genres = json.optJSONArray("genres")
@@ -184,6 +184,19 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             .map { it.optString("name") }
             .filter(String::isNotBlank)
             .take(4)
+            .toList()
+        val castArray = json.optJSONObject("credits")?.optJSONArray("cast")
+        val cast = castArray.toObjectSequence()
+            .filter { it.optNullableString("profile_path") != null }
+            .take(DETAIL_CAST_LIMIT)
+            .map { member ->
+                Person(
+                    id = member.optInt("id"),
+                    name = member.optString("name"),
+                    photoUrl = image(member.optNullableString("profile_path"), "w342"),
+                    knownFor = member.optString("character"),
+                )
+            }
             .toList()
         return MediaDetails(
             item = normalized.copy(
@@ -194,6 +207,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             runtimeMinutes = json.optInt("runtime").takeIf { it > 0 }
                 ?: json.optJSONArray("episode_run_time")?.optInt(0)?.takeIf { it > 0 },
             seasons = json.optInt("number_of_seasons").takeIf { it > 0 },
+            cast = cast,
         )
     }
 
@@ -400,6 +414,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val BASE_URL = "https://api.themoviedb.org/3"
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val RESULT_LIMIT = 30
+        private const val DETAIL_CAST_LIMIT = 18
         private const val DISCOVERY_RESULT_TARGET = 60
         private const val DISCOVERY_MAX_PAGES = 4
         private const val WATCH_OPTIONS_CACHE_SIZE = 256
