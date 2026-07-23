@@ -1104,6 +1104,12 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                                 enabled = state.watchOptions.webLink != null,
                                 onClick = { controller.openWebOptions().show(context) },
                             )
+                            state.details?.trailerUrl?.let {
+                                ActionButton(
+                                    label = "▶ Trailer",
+                                    onClick = { controller.openTrailer().show(context) },
+                                )
+                            }
                         }
                         if (state.traktConnected) {
                             Spacer(Modifier.height(10.dp))

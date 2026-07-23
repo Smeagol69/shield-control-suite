@@ -748,6 +748,9 @@ class MarqueeController(context: Context) {
     fun openWebOptions(): LaunchResult =
         launcher.openWebOptions(_detail.value.watchOptions.webLink)
 
+    fun openTrailer(): LaunchResult =
+        launcher.openTrailer(_detail.value.details?.trailerUrl)
+
     fun openTraktActivation(): LaunchResult {
         val state = _trakt.value
         val baseUrl = state.verificationUrl

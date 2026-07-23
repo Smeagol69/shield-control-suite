@@ -106,6 +106,17 @@ class ProviderLauncher(context: Context) {
         )
     }
 
+    fun openTrailer(link: String?): LaunchResult {
+        if (!UrlPolicy.isTrailerWeb(link)) {
+            return LaunchResult.Unavailable("No trailer is available for this title.")
+        }
+        return start(
+            Intent(Intent.ACTION_VIEW, checkNotNull(link).toUri())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            "Opening trailer",
+        )
+    }
+
     private fun launchPackage(packageName: String, label: String): LaunchResult {
         val intent = packageManager.getLeanbackLaunchIntentForPackage(packageName)
             ?: packageManager.getLaunchIntentForPackage(packageName)

@@ -41,6 +41,7 @@ data class MediaDetails(
     val runtimeMinutes: Int?,
     val seasons: Int?,
     val cast: List<Person> = emptyList(),
+    val trailerUrl: String? = null,
 )
 
 data class WatchProvider(

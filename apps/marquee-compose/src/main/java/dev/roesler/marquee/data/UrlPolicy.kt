@@ -39,6 +39,13 @@ object UrlPolicy {
                 host.endsWith(".themoviedb.org")
         }
 
+    fun isTrailerWeb(url: String?): Boolean =
+        matchesHttpsHost(url) { host ->
+            host == "youtube.com" ||
+                host.endsWith(".youtube.com") ||
+                host == "youtu.be"
+        }
+
     private fun matchesHttpsHost(url: String?, predicate: (String) -> Boolean): Boolean {
         if (url.isNullOrBlank()) return false
         return runCatching {

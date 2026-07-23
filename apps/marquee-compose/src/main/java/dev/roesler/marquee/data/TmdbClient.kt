@@ -159,7 +159,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun details(item: MediaItem): MediaDetails {
         val json = request(
             "/${item.type.apiName}/${item.id}",
-            mapOf("append_to_response" to "external_ids,credits"),
+            mapOf("append_to_response" to "external_ids,credits,videos"),
         )
         val normalized = mediaItem(json, item.type) ?: item
         val genres = json.optJSONArray("genres")
@@ -181,6 +181,17 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 )
             }
             .toList()
+        val trailerUrl = json.optJSONObject("videos")?.optJSONArray("results")
+            .toObjectSequence()
+            .filter { it.optString("site").equals("YouTube", ignoreCase = true) }
+            .filter { it.optString("key").isNotBlank() }
+            .sortedByDescending { video ->
+                (if (video.optString("type").equals("Trailer", ignoreCase = true)) 2 else 0) +
+                    (if (video.optBoolean("official")) 1 else 0)
+            }
+            .firstOrNull()
+            ?.optString("key")
+            ?.let { key -> "https://www.youtube.com/watch?v=$key" }
         return MediaDetails(
             item = normalized.copy(
                 posterUrl = normalized.posterUrl ?: item.posterUrl,
@@ -191,6 +202,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 ?: json.optJSONArray("episode_run_time")?.optInt(0)?.takeIf { it > 0 },
             seasons = json.optInt("number_of_seasons").takeIf { it > 0 },
             cast = cast,
+            trailerUrl = trailerUrl,
         )
     }
 
