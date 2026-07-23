@@ -1,5 +1,7 @@
 71ef6d495d6d3fae45e6a80a172d44ae7f5aa528794cf927bb52fd5bff034eae  AdGuardHome-0.107.78-linux-arm64.tar.gz
-5350052007324426d9914dd54483e0bbdd07ee5e56c1900c48550b9bc8b478a4  Marquee-2.2.2.apk
-86a7464b7c314dda88ddcc91e99893f6fd276821ca35c66776a09d92c8ab3233  Shield-Control-Portable-1.0.0.exe
-1f3c2f58c829a7e6aabeb7501a6c22c0b7d17df8dce33613dc57e03663c7cbe3  Shield-Control-Setup-1.0.0.exe
-d373cf7784d01fbc3e849c395c72f7ca826d50c5733d8af435b0e669b648b42d  Shield-Hooks-0.2.0.apk
+d4ef6ca6042097fa54cfab01ede56e10a93487f77bfb01572e9bb37eda138dee  Marquee-2.5.0.apk
+323a5b8893febed34fd52f661b07031b40615bad3b47972c5f89fabe14276946  Shield-Control-Setup-1.2.0.exe.blockmap
+b266bcff8b6107c7eec063ff9778f73ae337d7cc4b7c2413d9ab60f1887190c1  Shield-Control-Setup-1.2.0.exe
+50bfee187795f856e18845805f527f1b9f59417541ec572c4d3729eae7d6a24b  ShieldControl-1.2.0-portable.exe
+ba16d2c3f6335bbbe3e5c0ab2ad6706759bc22b7a965f11cfe12753c1a29feed  Shield-Hooks-0.2.0.apk
+73fa3eb1a286b95aac091691e744ace07cc053adbdcd5da8190e112d9438db67  latest.yml

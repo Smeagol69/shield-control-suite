@@ -32,13 +32,17 @@
       <button id="consoleBtn" class="ghost icon-btn" title="Open device console (adb shell)">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 9l3 3-3 3M13 15h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
       </button>
-      <button id="screenshotBtn" class="ghost icon-btn" title="Screenshot the Shield → Downloads">
+      <button id="screenshotBtn" class="ghost icon-btn" title="Screenshot the Shield → Downloads\KodiDrop">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 8a2 2 0 0 1 2-2h1.5l1-2h7l1 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"
           fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
       </button>
       <button id="rebootBtn" class="ghost icon-btn" title="Reboot the Shield">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           <path d="M7 6a8 8 0 1 0 10 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <button id="updateBtn" class="update-pill" title="Check GitHub Releases">
+        <span class="update-dot"></span>
+        <span id="updateText">v1.2.0</span>
       </button>
       <div class="status" id="status" title="Connection status">
         <span class="dot"></span>
@@ -128,6 +132,9 @@
         </button>
         <div class="crumbs" id="crumbs"></div>
         <span class="rootchip" id="rootChip" hidden>root</span>
+        <button id="openDownloadsBtn" class="ghost icon-btn" title="Open PC Downloads\KodiDrop">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 10v6m0 0 3-3m-3 3-3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <button id="refreshBtn" class="ghost icon-btn" title="Refresh">
           <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -163,7 +170,7 @@
       </div>
       <pre id="logLines"></pre>
       <div class="overlay-actions">
-        <button id="logPull" class="ghost">Pull full kodi.log → Downloads</button>
+        <button id="logPull" class="ghost">Pull full kodi.log → Downloads\KodiDrop</button>
       </div>
     </div>
   </div>

@@ -57,6 +57,44 @@ header {
 
 .header-right { display: flex; align-items: center; gap: 8px; }
 
+.update-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.update-pill:hover:not(:disabled) { border-color: var(--faint); color: var(--text); }
+.update-pill:disabled { cursor: default; }
+.update-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.update-pill[data-phase="checking"] .update-dot,
+.update-pill[data-phase="downloading"] .update-dot {
+  background: var(--amber);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+.update-pill[data-phase="available"],
+.update-pill[data-phase="downloaded"] {
+  color: var(--green);
+  border-color: rgba(118, 185, 0, 0.45);
+  background: var(--green-soft);
+}
+.update-pill[data-phase="available"] .update-dot,
+.update-pill[data-phase="downloaded"] .update-dot { background: var(--green); }
+.update-pill[data-phase="error"] { color: var(--amber); border-color: rgba(245, 166, 35, 0.4); }
+.update-pill[data-phase="error"] .update-dot { background: var(--amber); }
+
 .status {
   display: flex;
   align-items: center;

@@ -4,6 +4,13 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const { spawn, execFile, execFileSync } = require('child_process');
+const { autoUpdater } = require('electron-updater');
+const { resolvePullRoot, sanitizeName, uniqueLocalPath } = require('./lib/transfer-paths');
+const {
+  clampUpdatePercent,
+  detectUpdateMode,
+  updateErrorMessage,
+} = require('./lib/update-policy');
 
 // ---------------------------------------------------------------------------
 // Bundled binaries (vendor/ ships next to the app via electron-builder
@@ -31,7 +38,7 @@ const DEFAULTS = {
   lastDir: '/sdcard/Download',
   pushDir: '/sdcard/Download',            // default landing folder for dropped files
   kodiDropDir: '/sdcard/Download/KodiDrop',
-  pullDir: null,                          // null → this PC's Downloads folder
+  pullDir: null,                          // null → this PC's Downloads\KodiDrop folder
   backupDir: '/sdcard/backup',            // scanned for "last backup" status
   scrcpyBitrate: '8M',                    // lower = lower latency over WiFi (e.g. '4M'); higher = sharper
   bounds: null,
@@ -147,6 +154,131 @@ const state = {
   detail: '',
   binaries,
 };
+
+// ---------------------------------------------------------------------------
+// GitHub Release updates
+// Installed NSIS builds download and apply automatically. Portable builds
+// check the same feed and link to the new release because replacing a running
+// portable executable in place is unsafe on Windows.
+// ---------------------------------------------------------------------------
+const RELEASES_URL = 'https://github.com/Smeagol69/shield-control-suite/releases/latest';
+const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+const updateMode = detectUpdateMode(app.isPackaged, process.env.PORTABLE_EXECUTABLE_FILE);
+const updateState = {
+  mode: updateMode,
+  phase: updateMode === 'development' ? 'disabled' : 'idle',
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  percent: null,
+  message: updateMode === 'development'
+    ? 'Updates are enabled in packaged builds.'
+    : 'Checking GitHub Releases automatically.',
+};
+let updateCheckBusy = false;
+let updateTimer = null;
+let firstUpdateTimer = null;
+
+function pushUpdateState(patch = {}) {
+  Object.assign(updateState, patch);
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('update:state', { ...updateState });
+  }
+}
+
+async function checkForUpdates() {
+  if (updateMode === 'development' || updateCheckBusy || process.env.SHIELD_SMOKE) {
+    return { ...updateState };
+  }
+  updateCheckBusy = true;
+  pushUpdateState({
+    phase: 'checking',
+    percent: null,
+    message: 'Checking GitHub Releases…',
+  });
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    pushUpdateState({
+      phase: 'error',
+      message: updateErrorMessage(error),
+    });
+  } finally {
+    updateCheckBusy = false;
+  }
+  return { ...updateState };
+}
+
+function configureAutoUpdates() {
+  if (updateMode === 'development' || process.env.SHIELD_SMOKE) return;
+
+  autoUpdater.autoDownload = updateMode === 'installed';
+  autoUpdater.autoInstallOnAppQuit = updateMode === 'installed';
+  autoUpdater.allowPrerelease = false;
+
+  autoUpdater.on('checking-for-update', () => {
+    pushUpdateState({ phase: 'checking', percent: null, message: 'Checking GitHub Releases…' });
+  });
+  autoUpdater.on('update-available', (info) => {
+    const version = info && info.version ? info.version : null;
+    pushUpdateState({
+      phase: updateMode === 'installed' ? 'downloading' : 'available',
+      availableVersion: version,
+      percent: updateMode === 'installed' ? 0 : null,
+      message: updateMode === 'installed'
+        ? `Downloading Shield Control ${version || 'update'}…`
+        : `Shield Control ${version || 'update'} is available.`,
+    });
+  });
+  autoUpdater.on('update-not-available', () => {
+    pushUpdateState({
+      phase: 'current',
+      availableVersion: null,
+      percent: null,
+      message: `Shield Control ${app.getVersion()} is current.`,
+    });
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    const percent = clampUpdatePercent(progress.percent);
+    pushUpdateState({
+      phase: 'downloading',
+      percent,
+      message: `Downloading update · ${percent}%`,
+    });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    const version = info && info.version ? info.version : updateState.availableVersion;
+    pushUpdateState({
+      phase: 'downloaded',
+      availableVersion: version,
+      percent: 100,
+      message: `Shield Control ${version || 'update'} is ready. Restart to install.`,
+    });
+  });
+  autoUpdater.on('error', (error) => {
+    pushUpdateState({
+      phase: 'error',
+      percent: null,
+      message: updateErrorMessage(error),
+    });
+  });
+
+  firstUpdateTimer = setTimeout(checkForUpdates, 8000);
+  updateTimer = setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
+}
+
+async function handleUpdateAction() {
+  if (updateMode === 'development') return { ok: false, error: updateState.message };
+  if (updateMode === 'portable' && updateState.phase === 'available') {
+    await shell.openExternal(RELEASES_URL);
+    return { ok: true, opened: true };
+  }
+  if (updateMode === 'installed' && updateState.phase === 'downloaded') {
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    return { ok: true, installing: true };
+  }
+  await checkForUpdates();
+  return { ok: true, checking: true };
+}
 
 function setState(patch) {
   const before = JSON.stringify(state);
@@ -1147,26 +1279,12 @@ function enqueueBundleInstall(bundlePath, serial) {
 }
 
 // ---------------------------------------------------------------------------
-// Pulls — no dialogs: everything lands in the PC's Downloads folder
+// Pulls — no dialogs: everything lands in the PC's Downloads\KodiDrop folder
 // ---------------------------------------------------------------------------
-const sanitizeName = (n) => String(n).replace(/[<>:"/\\|?*]/g, '_');
-
 function resolvePullDir() {
-  const d = config.pullDir || app.getPath('downloads');
+  const d = resolvePullRoot(app.getPath('downloads'), config.pullDir);
   try { fs.mkdirSync(d, { recursive: true }); } catch {}
   return d;
-}
-
-function uniqueLocalPath(dir, name) {
-  let p = path.join(dir, name);
-  if (!fs.existsSync(p)) return p;
-  const ext = path.extname(name);
-  const base = name.slice(0, name.length - ext.length);
-  for (let i = 1; i < 1000; i++) {
-    p = path.join(dir, `${base} (${i})${ext}`);
-    if (!fs.existsSync(p)) return p;
-  }
-  return path.join(dir, `${base}-${Date.now()}${ext}`);
 }
 
 // stream `adb exec-out <cmd>` straight into a local file (binary-safe),
@@ -1200,21 +1318,33 @@ function execOutToFile(serial, cmdArgs, local, size, report) {
   });
 }
 
-function handlePull({ remotePath, name, size }) {
+function handlePull({ remotePath, name, size, type }) {
   if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Not connected' };
   if (typeof remotePath !== 'string' || !remotePath.startsWith('/')) return { ok: false, error: 'bad path' };
   const serial = state.serial;
   const expected = Number(size) > 0 ? Number(size) : 0;
+  const isDirectory = type === 'dir';
   enqueue({
     kind: 'pull',
     name: path.posix.basename(remotePath),
+    indeterminate: isDirectory,
     run: async (report) => {
       // resolve the local name at run time — queued same-name pulls each get a fresh slot
-      const local = uniqueLocalPath(resolvePullDir(), sanitizeName(name || path.posix.basename(remotePath)));
+      const local = uniqueLocalPath(
+        resolvePullDir(),
+        sanitizeName(name || path.posix.basename(remotePath)),
+        { isDirectory },
+      );
       const { code, tail } = await spawnAdbProgress(['-s', serial, 'pull', remotePath, local], report);
-      if (code === 0) return { ok: true, detail: `Saved to ${local}`, localPath: local };
+      if (code === 0) {
+        return {
+          ok: true,
+          detail: `${isDirectory ? 'Folder saved' : 'Saved'} to ${local}`,
+          localPath: local,
+        };
+      }
       // scoped-storage paths deny adb's sync service — root cat gets through
-      if (/permission denied|failed to stat/i.test(tail)) {
+      if (!isDirectory && /permission denied|failed to stat/i.test(tail)) {
         if (rootAvailable === null) await checkRoot();
         if (rootAvailable) {
           const r2 = await execOutToFile(serial, ['su', '-c', `cat ${shq(rootPath(remotePath))}`], local, expected, report);
@@ -1222,6 +1352,7 @@ function handlePull({ remotePath, name, size }) {
           return r2;
         }
       }
+      try { fs.rmSync(local, { recursive: true, force: true }); } catch {}
       return { ok: false, detail: lastLine(tail) || 'pull failed' };
     },
   });
@@ -1361,6 +1492,9 @@ async function runShell(cmd, asRoot) {
 // ---------------------------------------------------------------------------
 function registerIpc() {
   ipcMain.handle('shield:get-state', () => ({ ...state }));
+  ipcMain.handle('update:get-state', () => ({ ...updateState }));
+  ipcMain.handle('update:check', () => checkForUpdates());
+  ipcMain.handle('update:action', () => handleUpdateAction());
   ipcMain.handle('shield:reconnect', () => {
     propsCache.clear();
     deviceAbiCache = null; // re-probe arch in case a different device/transport settles
@@ -1370,7 +1504,7 @@ function registerIpc() {
   ipcMain.handle('config:get', () => ({
     pushDir: config.pushDir,
     kodiDropDir: config.kodiDropDir,
-    pullDir: config.pullDir || app.getPath('downloads'),
+    pullDir: resolvePullDir(),
     backupDir: config.backupDir,
   }));
   ipcMain.handle('status:get', () => ({ ...status }));
@@ -1412,6 +1546,10 @@ function registerIpc() {
   ipcMain.handle('fs:list', (_e, p) => listDir(p));
   ipcMain.handle('fs:home', () => config.lastDir || config.pushDir);
   ipcMain.handle('fs:pull', (_e, payload) => handlePull(payload || {}));
+  ipcMain.handle('downloads:open', async () => {
+    const error = await shell.openPath(resolvePullDir());
+    return error ? { ok: false, error } : { ok: true };
+  });
   ipcMain.handle('fs:send', async (_e, { paths, remoteDir } = {}) => {
     if (state.status !== 'connected' || !state.serial) return { ok: false, error: 'Shield is not connected' };
     const serial = state.serial;
@@ -1515,6 +1653,7 @@ if (!gotLock) {
     console.log('[shield] scrcpy:', SCRCPY_EXE, '— found =', binaries.scrcpy);
     registerIpc();
     createWindow();
+    configureAutoUpdates();
     runAdb(['version']).then((r) => {
       const m = r.out.match(/Version ([\d.]+)/);
       hostAdbVersion = m ? m[1] : '';
@@ -1529,6 +1668,8 @@ if (!gotLock) {
 
   app.on('will-quit', () => {
     quitting = true;
+    if (firstUpdateTimer) clearTimeout(firstUpdateTimer);
+    if (updateTimer) clearInterval(updateTimer);
     flushConfigSync();
     killRemoteShell();
     try { if (trackProc) trackProc.kill(); } catch {}

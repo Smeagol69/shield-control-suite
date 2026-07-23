@@ -62,8 +62,8 @@ fun RemoteImage(
 
 private object ImageCache {
     private const val MAX_MEMORY_CACHE_KB = 48 * 1024
-    private const val MAX_DISK_CACHE_BYTES = 96L * 1024L * 1024L
-    private const val MAX_DISK_FILES = 300
+    private const val MAX_DISK_CACHE_BYTES = 192L * 1024L * 1024L
+    private const val MAX_DISK_FILES = 1_000
     private const val MAX_IMAGE_BYTES = 8 * 1024 * 1024
     private const val MAX_DECODED_EDGE = 2_048
     private const val MAX_DECODED_PIXELS = 4_194_304L
@@ -100,7 +100,7 @@ private object ImageCache {
             connection.instanceFollowRedirects = false
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("User-Agent", "Marquee/2.2.2 AndroidTV")
+            connection.setRequestProperty("User-Agent", "Marquee/2.6.0 AndroidTV")
             if (connection.responseCode !in 200..299) return null
             val length = connection.contentLengthLong
             if (length > MAX_IMAGE_BYTES) return null

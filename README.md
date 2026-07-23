@@ -6,14 +6,16 @@ LSPosed automation, and the root-hosted AdGuard service.
 
 ## Download the finished apps
 
-Open the [latest GitHub release](https://github.com/Smeagol69/shield-control-suite/releases/latest)
-for the one-click Windows installer, portable Windows executable, Android APKs,
-AdGuard package, and SHA-256 checksums.
+Use the [latest Shield Control suite release](https://github.com/Smeagol69/shield-control-suite/releases/latest)
+for the Windows installer, portable executable, updater metadata, Shield Hooks,
+and AdGuard package. Download the current Android TV media app from the
+[Marquee 2.6.0 release](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.6.0).
+Each release includes its SHA-256 checksum manifest.
 
-| Component | Current release | Purpose |
+| Component | Source version | Purpose |
 | --- | --- | --- |
-| Shield Control | 1.0.0 | Standalone Windows control center with bundled ADB and scrcpy |
-| Marquee | 2.2.2 | Native Android TV discovery, provider, Trakt, and playback hub |
+| Shield Control | 1.2.0 | Standalone Windows control center with bundled ADB, scrcpy, and GitHub Release updates |
+| Marquee | 2.6.0 | Native Android TV discovery, provider, Trakt, cast, and playback hub |
 | Shield Hooks | 0.2.0 | Package-scoped LSPosed observation and constrained BeanShell automation |
 | AdGuard Home service | 0.107.78 | Boot-persistent whole-home DNS filtering on the Shield |
 
@@ -28,6 +30,12 @@ AdGuard package, and SHA-256 checksums.
 | `services/adguard` | Boot-persistent AdGuard Home deployment and maintenance scripts. |
 | `docs/ai-collaboration.md` | Shared Git and handoff workflow for Codex and Claude. |
 | `release` | Release inventory and reproducible SHA-256 manifest. |
+
+Shield Control 1.2 routes pulls, screenshots, and Kodi logs to the collision-safe
+`Downloads\KodiDrop` folder, can download whole device folders, and checks GitHub
+Releases every 15 minutes. Marquee 2.6 loads up to 60 unique poster titles per
+shelf across 26 provider categories, keeps the active category heading visible,
+adds cast-to-filmography navigation, and caches completed shelves independently.
 
 Each project has its own README with setup, operation, and safety details.
 

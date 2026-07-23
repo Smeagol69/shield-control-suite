@@ -4,7 +4,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import dev.roesler.marquee.data.CatalogFilter
 import dev.roesler.marquee.data.CatalogProvider
+import dev.roesler.marquee.data.ExpiringLruCache
 import dev.roesler.marquee.data.MarqueeSettings
 import dev.roesler.marquee.data.MediaDetails
 import dev.roesler.marquee.data.MediaItem
@@ -23,6 +25,7 @@ import dev.roesler.marquee.data.TvMazeClient
 import dev.roesler.marquee.data.WatchOptions
 import dev.roesler.marquee.data.WatchProvider
 import dev.roesler.marquee.data.WatchlistStore
+import dev.roesler.marquee.data.filterCatalogRows
 import dev.roesler.marquee.playback.PlaybackMonitorService
 import dev.roesler.marquee.playback.PlaybackRecord
 import dev.roesler.marquee.playback.PlaybackCaptureService
@@ -86,6 +89,9 @@ data class ProvidersUiState(
     val providers: List<CatalogProvider> = emptyList(),
     val selectedProvider: CatalogProvider? = null,
     val rows: List<MediaRow> = emptyList(),
+    val filter: CatalogFilter = CatalogFilter.ALL,
+    val loadedCategoryCount: Int = 0,
+    val totalCategoryCount: Int = 0,
     val notice: String? = null,
     val error: String? = null,
 )
@@ -121,6 +127,7 @@ data class PeopleUiState(
     val query: String = "",
     val loading: Boolean = false,
     val people: List<Person> = emptyList(),
+    val showingPopular: Boolean = false,
     val selectedName: String? = null,
     val credits: List<MediaItem> = emptyList(),
     val error: String? = null,
@@ -152,6 +159,10 @@ class MarqueeController(context: Context) {
     private val launcher = ProviderLauncher(appContext)
     private val playbackStore = PlaybackStore(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val providerShelfCache = ExpiringLruCache<String, ProviderShelfLoad>(
+        maxEntries = PROVIDER_SHELF_CACHE_ENTRIES,
+        ttlMillis = PROVIDER_CACHE_TTL_MS,
+    )
 
     private var homeJob: Job? = null
     private var providerJob: Job? = null
@@ -207,6 +218,13 @@ class MarqueeController(context: Context) {
         if (destination == Destination.HOME && _home.value.rows.isEmpty()) refreshHome()
         if (destination == Destination.PROVIDERS && _providers.value.providers.isEmpty()) {
             refreshProviders()
+        }
+        if (
+            destination == Destination.PEOPLE &&
+            _people.value.people.isEmpty() &&
+            !_people.value.loading
+        ) {
+            loadPopularPeople()
         }
     }
 
@@ -290,12 +308,16 @@ class MarqueeController(context: Context) {
             )
             return
         }
+        providerShelfCache.clear()
         providerJob?.cancel()
         providerJob = scope.launch {
+            val activeFilter = _providers.value.filter
             _providers.value = _providers.value.copy(
                 loading = true,
                 error = null,
                 notice = null,
+                loadedCategoryCount = 0,
+                totalCategoryCount = PROVIDER_SHELVES.size,
             )
             val available = serviceResult {
                 withContext(Dispatchers.IO) { tmdbClient.catalogProviders() }
@@ -329,6 +351,8 @@ class MarqueeController(context: Context) {
                 loading = true,
                 providers = providers,
                 selectedProvider = selected,
+                filter = activeFilter,
+                totalCategoryCount = PROVIDER_SHELVES.size,
             )
             settingsStore.saveLastProviderId(selected.id)
             loadProviderCatalog(selected)
@@ -346,23 +370,89 @@ class MarqueeController(context: Context) {
         }
     }
 
+    fun setProviderFilter(filter: CatalogFilter) {
+        _providers.value = _providers.value.copy(filter = filter)
+    }
+
+    fun surpriseMe(): Boolean {
+        val item = filterCatalogRows(_providers.value.rows, _providers.value.filter)
+            .asSequence()
+            .flatMap { it.items.asSequence() }
+            .distinctBy { it.key() }
+            .toList()
+            .randomOrNull()
+            ?: return false
+        openDetails(item)
+        return true
+    }
+
     fun searchPeople(query: String) {
         _people.value = _people.value.copy(
             query = query,
+            showingPopular = false,
             selectedName = null,
             credits = emptyList(),
             error = null,
         )
         peopleJob?.cancel()
         if (query.isBlank()) {
-            _people.value = PeopleUiState()
+            loadPopularPeople()
             return
         }
+        launchPeopleSearch(query.trim(), debounceMillis = 350L)
+    }
+
+    fun submitPeopleSearch() {
+        val query = _people.value.query.trim()
+        if (query.isBlank()) {
+            loadPopularPeople()
+        } else {
+            launchPeopleSearch(query, debounceMillis = 0L)
+        }
+    }
+
+    fun clearPersonSelection() {
+        if (_people.value.people.isEmpty()) {
+            loadPopularPeople()
+        } else {
+            _people.value = _people.value.copy(
+                loading = false,
+                selectedName = null,
+                credits = emptyList(),
+                error = null,
+            )
+        }
+    }
+
+    private fun launchPeopleSearch(query: String, debounceMillis: Long) {
+        peopleJob?.cancel()
         peopleJob = scope.launch {
-            delay(350)
-            _people.value = _people.value.copy(loading = true)
+            if (debounceMillis > 0L) delay(debounceMillis)
+            _people.value = _people.value.copy(
+                loading = true,
+                showingPopular = false,
+                error = null,
+            )
             serviceResult {
-                withContext(Dispatchers.IO) { tmdbClient.searchPeople(query.trim()) }
+                withContext(Dispatchers.IO) { tmdbClient.searchPeople(query) }
+            }.onSuccess {
+                _people.value = _people.value.copy(loading = false, people = it)
+            }.onFailure {
+                if (it is CancellationException) throw it
+                _people.value = _people.value.copy(
+                    loading = false,
+                    error = it.userMessage(),
+                )
+            }
+        }
+    }
+
+    private fun loadPopularPeople() {
+        peopleJob?.cancel()
+        peopleJob = scope.launch {
+            _people.value = PeopleUiState(loading = true, showingPopular = true)
+            serviceResult {
+                withContext(Dispatchers.IO) { tmdbClient.popularPeople() }
             }.onSuccess {
                 _people.value = _people.value.copy(loading = false, people = it)
             }.onFailure {
@@ -447,6 +537,17 @@ class MarqueeController(context: Context) {
         detailJob = null
         traktActionJob = null
         _detail.value = DetailUiState()
+    }
+
+    /** Jump from a detail-screen cast member to the People tab showing their filmography. */
+    fun openPersonFilmography(person: Person) {
+        closeDetails()
+        _people.value = PeopleUiState(
+            people = listOf(person),
+            selectedName = person.name,
+        )
+        _destination.value = Destination.PEOPLE
+        selectPerson(person)
     }
 
     fun toggleWatchlist(): Boolean {
@@ -560,6 +661,7 @@ class MarqueeController(context: Context) {
             previous.region != normalized.region
         ) {
             providerJob?.cancel()
+            providerShelfCache.clear()
             _providers.value = ProvidersUiState()
         }
         if (traktCredentialsChanged || normalized.traktClientId.isBlank()) {
@@ -695,6 +797,11 @@ class MarqueeController(context: Context) {
                 closeDetails()
                 true
             }
+            _destination.value == Destination.PEOPLE &&
+                _people.value.selectedName != null -> {
+                clearPersonSelection()
+                true
+            }
             _destination.value != Destination.HOME -> {
                 navigate(Destination.HOME)
                 true
@@ -708,35 +815,111 @@ class MarqueeController(context: Context) {
 
     private suspend fun loadProviderCatalog(provider: CatalogProvider) {
         val providerList = _providers.value.providers
+        val activeFilter = _providers.value.filter
         _providers.value = ProvidersUiState(
             loading = true,
             providers = providerList,
             selectedProvider = provider,
+            filter = activeFilter,
+            totalCategoryCount = PROVIDER_SHELVES.size,
         )
-        serviceResult {
-            withContext(Dispatchers.IO) { buildProviderCatalog(provider) }
-        }.onSuccess { result ->
-            _providers.value = ProvidersUiState(
-                providers = providerList,
-                selectedProvider = provider,
-                rows = result.rows,
-                notice = result.warnings.takeIf(List<String>::isNotEmpty)
-                    ?.joinToString(" · "),
-                error = if (result.rows.isEmpty()) {
-                    result.warnings.firstOrNull()
-                        ?: "No ${provider.name} catalog rows are available."
-                } else {
-                    null
-                },
-            )
-        }.onFailure { error ->
-            if (error is CancellationException) throw error
-            _providers.value = ProvidersUiState(
-                providers = providerList,
-                selectedProvider = provider,
-                error = error.userMessage(),
-            )
+
+        coroutineScope {
+            val personalizedTask = async(Dispatchers.IO) {
+                serviceResult { buildProviderPersonalization(provider) }
+            }
+            val rows = mutableListOf<MediaRow>()
+            val warnings = mutableListOf<String>()
+            var loadedCategories = 0
+
+            suspend fun loadAndPublish(shelves: List<ProviderShelfSpec>) {
+                val result = withContext(Dispatchers.IO) {
+                    loadProviderShelves(provider, shelves)
+                }
+                rows += result.rows
+                warnings += result.warnings
+                loadedCategories += shelves.size
+                publishProviderCatalog(
+                    provider = provider,
+                    rows = rows,
+                    warnings = warnings,
+                    loadedCategories = loadedCategories,
+                    loading = true,
+                )
+            }
+
+            try {
+                loadAndPublish(PROVIDER_SHELVES.take(CORE_PROVIDER_CATEGORY_COUNT))
+
+                personalizedTask.await().fold(
+                    onSuccess = { personalized ->
+                        rows.addAll(0, personalized.rows)
+                        warnings += personalized.warnings
+                    },
+                    onFailure = { error ->
+                        if (error is CancellationException) throw error
+                        warnings += "Personalized rows unavailable"
+                    },
+                )
+                publishProviderCatalog(
+                    provider = provider,
+                    rows = rows,
+                    warnings = warnings,
+                    loadedCategories = loadedCategories,
+                    loading = true,
+                )
+
+                PROVIDER_SHELVES
+                    .drop(CORE_PROVIDER_CATEGORY_COUNT)
+                    .chunked(PROVIDER_DISCOVERY_CONCURRENCY)
+                    .forEach { loadAndPublish(it) }
+
+                publishProviderCatalog(
+                    provider = provider,
+                    rows = rows,
+                    warnings = warnings,
+                    loadedCategories = PROVIDER_SHELVES.size,
+                    loading = false,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                publishProviderCatalog(
+                    provider = provider,
+                    rows = rows,
+                    warnings = warnings,
+                    loadedCategories = loadedCategories,
+                    loading = false,
+                    error = error.userMessage(),
+                )
+            }
         }
+    }
+
+    private fun publishProviderCatalog(
+        provider: CatalogProvider,
+        rows: List<MediaRow>,
+        warnings: List<String>,
+        loadedCategories: Int,
+        loading: Boolean,
+        error: String? = null,
+    ) {
+        val current = _providers.value
+        if (current.selectedProvider?.id != provider.id) return
+        val uniqueWarnings = warnings.distinct()
+        _providers.value = current.copy(
+            loading = loading,
+            rows = rows.toList(),
+            loadedCategoryCount = loadedCategories,
+            totalCategoryCount = PROVIDER_SHELVES.size,
+            notice = uniqueWarnings.takeIf(List<String>::isNotEmpty)?.joinToString(" | "),
+            error = when {
+                error != null && rows.isEmpty() -> error
+                !loading && rows.isEmpty() -> uniqueWarnings.firstOrNull()
+                    ?: "No ${provider.name} catalog rows are available."
+                else -> null
+            },
+        )
     }
 
     private suspend fun monitorLivePlayback() {
@@ -862,104 +1045,8 @@ class MarqueeController(context: Context) {
             .distinctBy { it.key() }
             .toList()
 
-    private suspend fun buildProviderCatalog(provider: CatalogProvider): ProviderLoad =
+    private suspend fun buildProviderPersonalization(provider: CatalogProvider): ProviderLoad =
         coroutineScope {
-            fun discoveryRow(
-                title: String,
-                type: MediaType,
-                sort: ProviderSort,
-                genreId: Int? = null,
-            ) = async {
-                serviceResult {
-                    MediaRow(
-                        title = title,
-                        items = tmdbClient.providerTitles(provider.id, type, sort, genreId),
-                        subtitle = "${provider.name} · ${_settings.value.region}",
-                    )
-                }
-            }
-
-            val discoveryTasks = listOf(
-                "Popular movies" to discoveryRow(
-                    "Popular movies",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                ),
-                "Popular series" to discoveryRow(
-                    "Popular series",
-                    MediaType.TV,
-                    ProviderSort.POPULAR,
-                ),
-                "New movies" to discoveryRow(
-                    "New movies",
-                    MediaType.MOVIE,
-                    ProviderSort.NEWEST,
-                ),
-                "New series" to discoveryRow(
-                    "New series",
-                    MediaType.TV,
-                    ProviderSort.NEWEST,
-                ),
-                "Top rated movies" to discoveryRow(
-                    "Top rated movies",
-                    MediaType.MOVIE,
-                    ProviderSort.TOP_RATED,
-                ),
-                "Top rated series" to discoveryRow(
-                    "Top rated series",
-                    MediaType.TV,
-                    ProviderSort.TOP_RATED,
-                ),
-                "Family night" to discoveryRow(
-                    "Family night",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_FAMILY,
-                ),
-                "Comedy" to discoveryRow(
-                    "Comedy",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_COMEDY,
-                ),
-                "Action" to discoveryRow(
-                    "Action",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_ACTION,
-                ),
-                "Sci-Fi" to discoveryRow(
-                    "Sci-Fi",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_SCIFI,
-                ),
-                "Horror" to discoveryRow(
-                    "Horror",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    MOVIE_GENRE_HORROR,
-                ),
-                "Drama series" to discoveryRow(
-                    "Drama series",
-                    MediaType.TV,
-                    ProviderSort.POPULAR,
-                    GENRE_DRAMA,
-                ),
-                "Documentaries" to discoveryRow(
-                    "Documentaries",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    GENRE_DOCUMENTARY,
-                ),
-                "Animation" to discoveryRow(
-                    "Animation",
-                    MediaType.MOVIE,
-                    ProviderSort.POPULAR,
-                    GENRE_ANIMATION,
-                ),
-            )
-
             val includeTrakt = _trakt.value.connected
             val playbackTask = includeTrakt.takeIf { it }?.let {
                 async { serviceResult { traktClient.playbackProgress() } }
@@ -979,16 +1066,6 @@ class MarqueeController(context: Context) {
                     )
                 }
                 .orEmpty()
-            val discoveryRows = discoveryTasks.mapNotNull { (label, task) ->
-                task.await().fold(
-                    onSuccess = { it.takeIf { row -> row.items.isNotEmpty() } },
-                    onFailure = {
-                        warnings += "$label unavailable"
-                        null
-                    },
-                )
-            }
-
             val personalizedRows = mutableListOf<MediaRow>()
             localPlayback.takeIf(List<MediaItem>::isNotEmpty)?.let {
                 personalizedRows += MediaRow(
@@ -1045,10 +1122,73 @@ class MarqueeController(context: Context) {
             }
 
             ProviderLoad(
-                rows = personalizedRows + discoveryRows,
+                rows = personalizedRows,
                 warnings = warnings,
             )
         }
+
+    private suspend fun loadProviderShelves(
+        provider: CatalogProvider,
+        shelves: List<ProviderShelfSpec>,
+    ): ProviderLoad {
+        val region = _settings.value.region
+        val results = coroutineScope {
+            shelves.map { shelf ->
+                async {
+                    loadProviderShelf(
+                        provider = provider,
+                        shelf = shelf,
+                        region = region,
+                    )
+                }
+            }.awaitAll()
+        }
+        return ProviderLoad(
+            rows = results.mapNotNull(ProviderShelfLoad::row),
+            warnings = results.mapNotNull(ProviderShelfLoad::warning),
+        )
+    }
+
+    private fun loadProviderShelf(
+        provider: CatalogProvider,
+        shelf: ProviderShelfSpec,
+        region: String,
+    ): ProviderShelfLoad {
+        val cacheKey = buildString {
+            append(region)
+            append(':')
+            append(provider.id)
+            append(':')
+            append(shelf.type.apiName)
+            append(':')
+            append(shelf.sort)
+            append(':')
+            append(shelf.genreId ?: 0)
+        }
+        providerShelfCache.get(cacheKey)?.let { return it }
+        return serviceResult {
+            val items = tmdbClient.providerTitles(
+                providerId = provider.id,
+                type = shelf.type,
+                sort = shelf.sort,
+                genreId = shelf.genreId,
+            )
+            ProviderShelfLoad(
+                row = MediaRow(
+                    title = shelf.title,
+                    items = items,
+                    subtitle = "${items.size} titles | ${provider.name} | $region",
+                ).takeIf { items.isNotEmpty() },
+            )
+        }.getOrElse {
+            ProviderShelfLoad(
+                row = null,
+                warning = "${shelf.title} unavailable",
+            )
+        }.also { result ->
+            if (result.warning == null) providerShelfCache.put(cacheKey, result)
+        }
+    }
 
     private suspend fun availableOnProvider(
         items: List<MediaItem>,
@@ -1392,22 +1532,175 @@ class MarqueeController(context: Context) {
         val warnings: List<String>,
     )
 
+    private data class ProviderShelfLoad(
+        val row: MediaRow?,
+        val warning: String? = null,
+    )
+
+    private data class ProviderShelfSpec(
+        val title: String,
+        val type: MediaType,
+        val sort: ProviderSort,
+        val genreId: Int? = null,
+    )
+
     companion object {
         private const val MOVIE_GENRE_COMEDY = 35
         private const val MOVIE_GENRE_FAMILY = 10_751
         private const val MOVIE_GENRE_ACTION = 28
+        private const val MOVIE_GENRE_ADVENTURE = 12
+        private const val MOVIE_GENRE_FANTASY = 14
         private const val MOVIE_GENRE_SCIFI = 878
         private const val MOVIE_GENRE_HORROR = 27
+        private const val MOVIE_GENRE_THRILLER = 53
+        private const val MOVIE_GENRE_ROMANCE = 10_749
+        private const val TV_GENRE_ACTION_ADVENTURE = 10_759
+        private const val TV_GENRE_SCIFI_FANTASY = 10_765
+        private const val TV_GENRE_KIDS = 10_762
+        private const val GENRE_CRIME = 80       // shared movie/TV id
+        private const val GENRE_MYSTERY = 9_648  // shared movie/TV id
         private const val GENRE_DRAMA = 18       // shared movie/TV id
         private const val GENRE_DOCUMENTARY = 99 // shared movie/TV id
         private const val GENRE_ANIMATION = 16   // shared movie/TV id
         private const val PLAYBACK_FILTER_LIMIT = 18
         private const val RECOMMENDATION_FILTER_LIMIT = 14
         private const val AVAILABILITY_CONCURRENCY = 4
+        private const val PROVIDER_DISCOVERY_CONCURRENCY = 3
+        private const val CORE_PROVIDER_CATEGORY_COUNT = 6
+        private const val PROVIDER_SHELF_CACHE_ENTRIES = 160
+        private const val PROVIDER_CACHE_TTL_MS = 30L * 60L * 1_000L
         private const val LOCAL_PLAYBACK_LIMIT = 30
         private const val LIVE_REFRESH_INTERVAL_MS = 1_000L
         private const val LIVE_SESSION_MAX_AGE_MS = 15_000L
         private const val LIVE_ROW_TITLE = "Playing now"
+        private val PROVIDER_SHELVES = listOf(
+            ProviderShelfSpec("Popular movies", MediaType.MOVIE, ProviderSort.POPULAR),
+            ProviderShelfSpec("Popular series", MediaType.TV, ProviderSort.POPULAR),
+            ProviderShelfSpec("New movies", MediaType.MOVIE, ProviderSort.NEWEST),
+            ProviderShelfSpec("New series", MediaType.TV, ProviderSort.NEWEST),
+            ProviderShelfSpec("Top rated movies", MediaType.MOVIE, ProviderSort.TOP_RATED),
+            ProviderShelfSpec("Top rated series", MediaType.TV, ProviderSort.TOP_RATED),
+            ProviderShelfSpec(
+                "Family night",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_FAMILY,
+            ),
+            ProviderShelfSpec(
+                "Comedy",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_COMEDY,
+            ),
+            ProviderShelfSpec(
+                "Action",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_ACTION,
+            ),
+            ProviderShelfSpec(
+                "Adventure",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_ADVENTURE,
+            ),
+            ProviderShelfSpec(
+                "Fantasy",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_FANTASY,
+            ),
+            ProviderShelfSpec(
+                "Sci-Fi",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_SCIFI,
+            ),
+            ProviderShelfSpec(
+                "Horror",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_HORROR,
+            ),
+            ProviderShelfSpec(
+                "Thrillers",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_THRILLER,
+            ),
+            ProviderShelfSpec(
+                "Mysteries",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_MYSTERY,
+            ),
+            ProviderShelfSpec(
+                "Crime movies",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_CRIME,
+            ),
+            ProviderShelfSpec(
+                "Romance",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_ROMANCE,
+            ),
+            ProviderShelfSpec(
+                "Drama series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                GENRE_DRAMA,
+            ),
+            ProviderShelfSpec(
+                "Action & adventure series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                TV_GENRE_ACTION_ADVENTURE,
+            ),
+            ProviderShelfSpec(
+                "Sci-Fi & fantasy series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                TV_GENRE_SCIFI_FANTASY,
+            ),
+            ProviderShelfSpec(
+                "Crime series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                GENRE_CRIME,
+            ),
+            ProviderShelfSpec(
+                "Comedy series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                MOVIE_GENRE_COMEDY,
+            ),
+            ProviderShelfSpec(
+                "Mystery series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                GENRE_MYSTERY,
+            ),
+            ProviderShelfSpec(
+                "Kids series",
+                MediaType.TV,
+                ProviderSort.POPULAR,
+                TV_GENRE_KIDS,
+            ),
+            ProviderShelfSpec(
+                "Documentaries",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_DOCUMENTARY,
+            ),
+            ProviderShelfSpec(
+                "Animation",
+                MediaType.MOVIE,
+                ProviderSort.POPULAR,
+                GENRE_ANIMATION,
+            ),
+        )
         private val ANDROID_PACKAGE =
             Regex("""^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$""")
     }

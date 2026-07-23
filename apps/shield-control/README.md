@@ -18,7 +18,19 @@ npm run dist
 
 Outputs to `dist/`:
 - `ShieldControl-<version>-portable.exe` — single standalone exe
-- `Shield Control Setup <version>.exe` — one-click installer (faster startup, Start Menu entry)
+- `Shield-Control-Setup-<version>.exe` — one-click installer (faster startup, Start Menu entry)
+- `latest.yml` and the installer blockmap — update metadata for GitHub Releases
+
+## Automatic updates
+
+The one-click installer is the recommended build. Packaged copies check the
+repository's latest GitHub Release on launch and every 15 minutes. Installed
+copies download a newer installer in the background, verify electron-builder's
+SHA-512 metadata, and offer a one-click restart when it is ready.
+
+Portable copies use the same live release check but open the release page for
+the replacement executable. They do not overwrite their own running `.exe`.
+Development and `SHIELD_SMOKE` sessions never contact the update feed.
 
 ## How it connects
 
@@ -38,6 +50,13 @@ online state, IP, storage, memory, CPU temp (via `thermalservice`), uptime, Kodi
 running/playback state, recent Kodi log errors (view + pull full log), last backup in
 `backupDir`, host adb server, WiFi-adb bridge port, and root availability.
 
+## Downloads and folders
+
+Pulled files, screenshots, and Kodi logs default to this PC's
+`Downloads\KodiDrop` folder. The folder button in the device-browser toolbar opens
+that destination immediately. File and folder rows both have a download action;
+name collisions are preserved as `name (1)`, `name (2)`, and so on.
+
 ## Root-powered browsing
 
 Folders the shell user can't read (`/storage/emulated`, `/sdcard/Android/data`, `/data`,
@@ -48,7 +67,8 @@ the raw backing store at `/data/media`. Pulls fall back to `su cat` the same way
 ## Config keys (`%APPDATA%\Shield Control\config.json`)
 
 `ip`, `port`, `pushDir` (default drop target), `kodiDropDir`, `pullDir`
-(default: this PC's Downloads), `backupDir` (default `/sdcard/backup`), `lastDir`.
+(default: this PC's `Downloads\KodiDrop`), `backupDir` (default
+`/sdcard/backup`), `lastDir`.
 
 ## Patching (Morphe + De-Vanced)
 

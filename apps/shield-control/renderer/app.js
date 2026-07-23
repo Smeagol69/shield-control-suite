@@ -2,6 +2,8 @@ const $ = (s) => document.querySelector(s);
 
 const els = {
   statusText: $('#statusText'),
+  updateBtn: $('#updateBtn'),
+  updateText: $('#updateText'),
   deviceName: $('#deviceName'),
   deviceMeta: $('#deviceMeta'),
   controlBtn: $('#controlBtn'),
@@ -16,6 +18,7 @@ const els = {
   navchips: $('#navchips'),
   listing: $('#listing'),
   upBtn: $('#upBtn'),
+  openDownloadsBtn: $('#openDownloadsBtn'),
   refreshBtn: $('#refreshBtn'),
   veil: $('#veil'),
   vtDownload: $('#vtDownload'),
@@ -112,6 +115,32 @@ function toast(msg, kind = 'error') {
   els.toasts.append(d);
   setTimeout(() => d.remove(), 7000);
 }
+
+function applyUpdateState(next) {
+  const disabled = !next || next.phase === 'disabled';
+  els.updateBtn.hidden = disabled;
+  if (disabled) return;
+
+  els.updateBtn.dataset.phase = next.phase;
+  els.updateBtn.disabled = next.phase === 'checking' || next.phase === 'downloading';
+  els.updateBtn.title = next.message || 'Check GitHub Releases';
+  const version = next.availableVersion || next.currentVersion || '';
+  els.updateText.textContent = {
+    checking: 'Checking…',
+    downloading: next.percent == null ? 'Downloading…' : `Update ${next.percent}%`,
+    downloaded: 'Restart to update',
+    available: `Update v${version}`,
+    error: 'Retry update',
+    current: `v${next.currentVersion}`,
+    idle: `v${next.currentVersion}`,
+  }[next.phase] || `v${next.currentVersion}`;
+}
+
+els.updateBtn.addEventListener('click', async () => {
+  const result = await window.shield.updateAction();
+  if (!result.ok) toast(result.error || 'Update action failed');
+  else if (result.opened) toast('Opened the latest GitHub Release.', 'info');
+});
 
 // ---------------- connection state ----------------
 function applyState(s) {
@@ -828,19 +857,16 @@ function renderEntries(entries) {
 
     const actions = document.createElement('span');
     actions.className = 'actions';
-    if (e.type === 'dir') {
-      row.addEventListener('click', () => refresh(e.path));
-    } else {
-      const pull = document.createElement('button');
-      pull.className = 'pull';
-      pull.title = 'Download to this PC';
-      pull.innerHTML = SVG_DOWNLOAD;
-      pull.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        window.shield.pull(e.path, e.name, e.size);
-      });
-      actions.append(pull);
-    }
+    if (e.type === 'dir') row.addEventListener('click', () => refresh(e.path));
+    const pull = document.createElement('button');
+    pull.className = 'pull';
+    pull.title = `Download ${e.type === 'dir' ? 'folder' : 'file'} to ${cfg.pullDir}`;
+    pull.innerHTML = SVG_DOWNLOAD;
+    pull.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      window.shield.pull(e.path, e.name, e.size, e.type);
+    });
+    actions.append(pull);
     actions.append(makeDeleteButton(e));
     row.append(actions);
     els.listing.append(row);
@@ -887,6 +913,10 @@ function makeDeleteButton(entry) {
 
 els.upBtn.addEventListener('click', () => {
   if (currentDir !== '/') refresh(currentDir.split('/').slice(0, -1).join('/') || '/');
+});
+els.openDownloadsBtn.addEventListener('click', async () => {
+  const result = await window.shield.openDownloads();
+  if (!result.ok) toast(result.error || 'Could not open the KodiDrop folder');
 });
 els.refreshBtn.addEventListener('click', () => refresh(currentDir));
 
@@ -1223,6 +1253,8 @@ function renderTransfers() {
 // ---------------- init ----------------
 (async () => {
   window.shield.onState(applyState);
+  window.shield.onUpdate(applyUpdateState);
+  applyUpdateState(await window.shield.getUpdateState());
   cfg = await window.shield.getConfig();
   currentDir = (await window.shield.homeDir()) || cfg.pushDir;
   renderNavChips();

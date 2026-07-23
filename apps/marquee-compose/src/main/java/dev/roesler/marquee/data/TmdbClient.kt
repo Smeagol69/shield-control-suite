@@ -18,15 +18,15 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         },
     )
 
-    fun trending(): List<MediaItem> = mediaList(request("/trending/all/week"))
+    fun trending(): List<MediaItem> = discoveryMediaList("/trending/all/week")
 
-    fun popularMovies(): List<MediaItem> = mediaList(request("/movie/popular"))
+    fun popularMovies(): List<MediaItem> = discoveryMediaList("/movie/popular")
 
-    fun popularTv(): List<MediaItem> = mediaList(request("/tv/popular"))
+    fun popularTv(): List<MediaItem> = discoveryMediaList("/tv/popular")
 
-    fun topRatedMovies(): List<MediaItem> = mediaList(request("/movie/top_rated"))
+    fun topRatedMovies(): List<MediaItem> = discoveryMediaList("/movie/top_rated")
 
-    fun nowPlaying(): List<MediaItem> = mediaList(request("/movie/now_playing"))
+    fun nowPlaying(): List<MediaItem> = discoveryMediaList("/movie/now_playing")
 
     fun catalogProviders(): List<CatalogProvider> {
         val region = settingsStore.load().region
@@ -100,8 +100,9 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 parameters["vote_count.gte"] = "100"
             }
         }
-        return mediaList(
-            request("/discover/${type.apiName}", parameters),
+        return discoveryMediaList(
+            path = "/discover/${type.apiName}",
+            parameters = parameters,
             forcedType = type,
         )
     }
@@ -138,28 +139,11 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun searchPeople(query: String): List<Person> {
         val results = request("/search/person", mapOf("query" to query)).optJSONArray("results")
             ?: JSONArray()
-        return buildList {
-            for (index in 0 until minOf(results.length(), RESULT_LIMIT)) {
-                val person = results.optJSONObject(index) ?: continue
-                val name = person.optString("name")
-                if (name.isBlank()) continue
-                val knownFor = person.optJSONArray("known_for")
-                    .toObjectSequence()
-                    .map { it.optString("title").ifBlank { it.optString("name") } }
-                    .filter(String::isNotBlank)
-                    .take(3)
-                    .joinToString()
-                add(
-                    Person(
-                        id = person.optInt("id"),
-                        name = name,
-                        photoUrl = image(person.optNullableString("profile_path"), "w342"),
-                        knownFor = knownFor,
-                    ),
-                )
-            }
-        }
+        return people(results)
     }
+
+    fun popularPeople(): List<Person> =
+        people(request("/person/popular").optJSONArray("results") ?: JSONArray())
 
     fun personCredits(personId: Int): List<MediaItem> {
         val cast = request("/person/$personId/combined_credits").optJSONArray("cast") ?: JSONArray()
@@ -175,7 +159,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun details(item: MediaItem): MediaDetails {
         val json = request(
             "/${item.type.apiName}/${item.id}",
-            mapOf("append_to_response" to "external_ids"),
+            mapOf("append_to_response" to "external_ids,credits"),
         )
         val normalized = mediaItem(json, item.type) ?: item
         val genres = json.optJSONArray("genres")
@@ -183,6 +167,19 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             .map { it.optString("name") }
             .filter(String::isNotBlank)
             .take(4)
+            .toList()
+        val castArray = json.optJSONObject("credits")?.optJSONArray("cast")
+        val cast = castArray.toObjectSequence()
+            .filter { it.optNullableString("profile_path") != null }
+            .take(DETAIL_CAST_LIMIT)
+            .map { member ->
+                Person(
+                    id = member.optInt("id"),
+                    name = member.optString("name"),
+                    photoUrl = image(member.optNullableString("profile_path"), "w342"),
+                    knownFor = member.optString("character"),
+                )
+            }
             .toList()
         return MediaDetails(
             item = normalized.copy(
@@ -193,6 +190,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             runtimeMinutes = json.optInt("runtime").takeIf { it > 0 }
                 ?: json.optJSONArray("episode_run_time")?.optInt(0)?.takeIf { it > 0 },
             seasons = json.optInt("number_of_seasons").takeIf { it > 0 },
+            cast = cast,
         )
     }
 
@@ -247,12 +245,35 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     private fun mediaList(
         response: JSONObject,
         forcedType: MediaType? = null,
+    ): List<MediaItem> = mediaItems(response, forcedType).take(RESULT_LIMIT)
+
+    private fun discoveryMediaList(
+        path: String,
+        parameters: Map<String, String> = emptyMap(),
+        forcedType: MediaType? = null,
+    ): List<MediaItem> = collectUniquePages(
+        targetSize = DISCOVERY_RESULT_TARGET,
+        maxPages = DISCOVERY_MAX_PAGES,
+        keyOf = { item -> "${item.type.apiName}:${item.id}" },
+    ) { page ->
+        val response = request(
+            path,
+            parameters + ("page" to page.toString()),
+        )
+        PageResult(
+            items = mediaItems(response, forcedType),
+            totalPages = response.optInt("total_pages", page),
+        )
+    }
+
+    private fun mediaItems(
+        response: JSONObject,
+        forcedType: MediaType? = null,
     ): List<MediaItem> {
         val results = response.optJSONArray("results") ?: return emptyList()
         return results.toObjectSequence()
             .mapNotNull { mediaItem(it, forcedType) }
             .filter { it.posterUrl != null }
-            .take(RESULT_LIMIT)
             .toList()
     }
 
@@ -278,6 +299,29 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             imdbId = json.optNullableString("imdb_id")
                 ?: json.optJSONObject("external_ids")?.optNullableString("imdb_id"),
         )
+    }
+
+    private fun people(results: JSONArray): List<Person> = buildList {
+        for (index in 0 until minOf(results.length(), RESULT_LIMIT)) {
+            val person = results.optJSONObject(index) ?: continue
+            val id = person.optInt("id")
+            val name = person.optString("name")
+            if (id <= 0 || name.isBlank()) continue
+            val knownFor = person.optJSONArray("known_for")
+                .toObjectSequence()
+                .map { it.optString("title").ifBlank { it.optString("name") } }
+                .filter(String::isNotBlank)
+                .take(3)
+                .joinToString()
+            add(
+                Person(
+                    id = id,
+                    name = name,
+                    photoUrl = image(person.optNullableString("profile_path"), "w342"),
+                    knownFor = knownFor,
+                ),
+            )
+        }
     }
 
     private fun JSONObject.toCatalogProvider(region: String): CatalogProvider? {
@@ -376,6 +420,9 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val BASE_URL = "https://api.themoviedb.org/3"
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val RESULT_LIMIT = 30
+        private const val DETAIL_CAST_LIMIT = 18
+        private const val DISCOVERY_RESULT_TARGET = 60
+        private const val DISCOVERY_MAX_PAGES = 4
         private const val WATCH_OPTIONS_CACHE_SIZE = 256
         private const val DEFAULT_PROVIDER_PRIORITY = 10_000
 

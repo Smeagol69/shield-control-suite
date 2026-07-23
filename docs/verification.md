@@ -1,5 +1,17 @@
 # Verification
 
+Run the desktop verification set from `apps/shield-control`:
+
+```powershell
+npm ci
+npm run check
+npm audit --audit-level=high
+```
+
+`npm run check` validates every Electron JavaScript entry point and runs the
+Node test suite, including collision-safe `Downloads\KodiDrop` path handling.
+The same commands run on `windows-latest` in the Desktop verification workflow.
+
 Run the complete Android verification set from the repository root:
 
 ```powershell

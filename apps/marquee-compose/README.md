@@ -7,14 +7,27 @@ legacy package ID `dev.roesler.marquee`.
 ## Features
 
 - Trending, popular, now-playing, and top-rated movie/TV rows from TMDB.
-- Title search plus actor/director search and filmographies.
+- Title search plus a remote-friendly People browser with popular actors,
+  explicit search submission, and dedicated filmography views.
 - Details, runtime or season information, recommendations, and a local
-  watchlist.
+  watchlist, plus a cast row that opens each person's filmography.
 - A dynamic `Because you liked …` row based on the last opened title.
 - Regional `Where to watch` data with installed-provider detection.
 - A provider hub inspired by native TV launchers: live regional provider tabs,
-  installed apps first, and provider-filtered popular, new, top-rated, family,
-  and comedy shelves.
+  installed apps first, 26 provider-filtered discovery categories, and
+  All/Movies/Series filters with a `Surprise me` action. Category headings stay
+  pinned while their poster shelf has focus.
+- Paginated discovery that loads up to 60 unique poster titles per shelf instead
+  of stopping at TMDB's 20-item first page.
+- A responsive 16:9 TV layout calibrated for the Shield's 960×540 logical
+  canvas, with stable focus sizing, clean 2:3 posters, fit-to-card provider
+  logos, safe-edge spacing, and a larger bounded artwork cache.
+- Progressive provider loading: six core shelves appear first, personalization
+  follows, and the remaining categories arrive three at a time with visible
+  progress.
+- A 30-minute, 160-entry per-shelf cache with bounded three-shelf concurrency.
+  Completed categories survive provider switches, while the on-screen Refresh
+  action clears the cache.
 - Trakt device authorization, automatic token refresh, personalized movie/show
   recommendations, synced watchlist, playback progress, recent history, and
   explicit watchlist/mark-watched actions.
@@ -25,7 +38,8 @@ legacy package ID `dev.roesler.marquee`.
   services and linked with required attribution.
 - Exact IMDb-title handoff to Stremio, with a title/year search fallback, plus
   Kodi, provider-app, or custom Android package handoff.
-- D-pad-first Compose for TV UI with no analytics.
+- D-pad-first Compose for TV UI with explicit provider-to-catalog focus routing
+  and no analytics.
 
 Marquee does not stream, download, patch, or bypass provider applications. It
 opens an installed provider/resolver or the provider options page returned by
@@ -81,7 +95,7 @@ progress, but cannot provide exact local progress through this interface.
 
 ## Legacy upgrade
 
-The native app uses version code 5 and the same application ID as the legacy
+The native app uses version code 9 and the same application ID as the legacy
 WebView build. Android permits an in-place upgrade only when both APKs use the
 same signing certificate.
 
