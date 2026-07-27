@@ -7,16 +7,19 @@ import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
-import java.util.Collections
 
 class TmdbClient(private val settingsStore: SettingsStore) {
-    private val watchOptionsCache = Collections.synchronizedMap(
-        object : LinkedHashMap<String, WatchOptions>(WATCH_OPTIONS_CACHE_SIZE, 0.75f, true) {
-            override fun removeEldestEntry(
-                eldest: MutableMap.MutableEntry<String, WatchOptions>,
-            ): Boolean = size > WATCH_OPTIONS_CACHE_SIZE
-        },
+    private val watchOptionsCache = ExpiringLruCache<String, WatchOptions>(
+        maxEntries = WATCH_OPTIONS_CACHE_SIZE,
+        ttlMillis = AVAILABILITY_TTL_MS,
     )
+    private val similarCache = ExpiringLruCache<String, List<MediaItem>>(
+        maxEntries = SIMILAR_CACHE_SIZE,
+        ttlMillis = CATALOG_TTL_MS,
+    )
+
+    @Volatile
+    private var genreNames: Map<Int, String>? = null
 
     fun trending(): List<MediaItem> = discoveryMediaList("/trending/all/week")
 
@@ -150,7 +153,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         val seen = hashSetOf<String>()
         return cast.toObjectSequence()
             .mapNotNull(::mediaItem)
-            .filter { seen.add("${it.type.apiName}:${it.id}") }
+            .filter { seen.add(it.key) }
             .sortedByDescending(MediaItem::rating)
             .take(RESULT_LIMIT)
             .toList()
@@ -197,17 +200,53 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun recommendations(item: MediaItem): List<MediaItem> =
         mediaList(request("/${item.type.apiName}/${item.id}/recommendations"))
 
+    /**
+     * Titles TMDB considers similar to [item], merged with its recommendations so a sparse
+     * `similar` response still fills a shelf. Cached because `Because you liked …` rows ask for
+     * the same seeds on every home refresh.
+     */
+    fun similarTo(item: MediaItem): List<MediaItem> {
+        val cacheKey = item.key
+        similarCache.get(cacheKey)?.let { return it }
+        val similar = runCatching {
+            mediaList(request("/${item.type.apiName}/${item.id}/similar"))
+        }.getOrDefault(emptyList())
+        val merged = (similar + runCatching { recommendations(item) }.getOrDefault(emptyList()))
+            .distinctBy { it.key }
+            .filter { it.id != item.id }
+        if (merged.isNotEmpty()) similarCache.put(cacheKey, merged)
+        return merged
+    }
+
+    /** TMDB's genre id-to-name table for both media types, fetched once per session. */
+    fun genreNames(): Map<Int, String> {
+        genreNames?.let { return it }
+        val names = linkedMapOf<Int, String>()
+        listOf("/genre/movie/list", "/genre/tv/list").forEach { path ->
+            runCatching { request(path) }.getOrNull()
+                ?.optJSONArray("genres")
+                .toObjectSequence()
+                .forEach { genre ->
+                    val id = genre.optInt("id")
+                    val name = genre.optString("name").trim()
+                    if (id > 0 && name.isNotBlank()) names.putIfAbsent(id, name)
+                }
+        }
+        if (names.isNotEmpty()) genreNames = names
+        return names
+    }
+
     fun watchOptions(item: MediaItem): WatchOptions {
         val settings = settingsStore.load()
-        val cacheKey = "${settings.region}:${item.type.apiName}:${item.id}"
-        watchOptionsCache[cacheKey]?.let { return it }
+        val cacheKey = "${settings.region}:${item.key}"
+        watchOptionsCache.get(cacheKey)?.let { return it }
         val results = request("/${item.type.apiName}/${item.id}/watch/providers")
             .optJSONObject("results")
         val region = results?.optJSONObject(settings.region)
             ?: results?.optJSONObject("US")
         if (region == null) {
             return WatchOptions(emptyList(), null).also {
-                watchOptionsCache[cacheKey] = it
+                watchOptionsCache.put(cacheKey, it)
             }
         }
 
@@ -236,7 +275,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         return WatchOptions(
             providers = providers.values.toList(),
             webLink = region.optNullableString("link"),
-        ).also { watchOptionsCache[cacheKey] = it }
+        ).also { watchOptionsCache.put(cacheKey, it) }
     }
 
     fun isAvailableOn(item: MediaItem, providerId: Int): Boolean =
@@ -254,7 +293,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     ): List<MediaItem> = collectUniquePages(
         targetSize = DISCOVERY_RESULT_TARGET,
         maxPages = DISCOVERY_MAX_PAGES,
-        keyOf = { item -> "${item.type.apiName}:${item.id}" },
+        keyOf = { item -> item.key },
     ) { page ->
         val response = request(
             path,
@@ -298,8 +337,22 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             rating = json.optDouble("vote_average").takeIf(Double::isFinite) ?: 0.0,
             imdbId = json.optNullableString("imdb_id")
                 ?: json.optJSONObject("external_ids")?.optNullableString("imdb_id"),
+            genreIds = json.genreIds(),
         )
     }
+
+    /**
+     * Genre ids drive the taste formula, and TMDB reports them two ways: list endpoints send a
+     * flat `genre_ids` array, detail endpoints send `genres` objects.
+     */
+    private fun JSONObject.genreIds(): List<Int> =
+        optJSONArray("genre_ids").toIntList().ifEmpty {
+            optJSONArray("genres")
+                .toObjectSequence()
+                .map { it.optInt("id") }
+                .filter { it > 0 }
+                .toList()
+        }
 
     private fun people(results: JSONArray): List<Person> = buildList {
         for (index in 0 until minOf(results.length(), RESULT_LIMIT)) {
@@ -424,6 +477,9 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val DISCOVERY_RESULT_TARGET = 60
         private const val DISCOVERY_MAX_PAGES = 4
         private const val WATCH_OPTIONS_CACHE_SIZE = 256
+        private const val SIMILAR_CACHE_SIZE = 48
+        private const val AVAILABILITY_TTL_MS = 6L * 60L * 60L * 1_000L
+        private const val CATALOG_TTL_MS = 30L * 60L * 1_000L
         private const val DEFAULT_PROVIDER_PRIORITY = 10_000
 
         val PROVIDER_PACKAGES = mapOf(

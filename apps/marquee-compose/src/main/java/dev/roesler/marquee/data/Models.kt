@@ -26,7 +26,23 @@ data class MediaItem(
     val imdbId: String? = null,
     val progressPercent: Double? = null,
     val contextLabel: String? = null,
+    val genreIds: List<Int> = emptyList(),
 )
+
+/** Stable identity for a title across TMDB, Trakt, and every local store. */
+val MediaItem.key: String
+    get() = "${type.apiName}:$id"
+
+/** How the viewer rated a title once they had seen it. */
+enum class Verdict(val storageName: String) {
+    LIKED("liked"),
+    DISLIKED("disliked"),
+    ;
+
+    companion object {
+        fun from(value: String?): Verdict? = entries.firstOrNull { it.storageName == value }
+    }
+}
 
 data class Person(
     val id: Int,
@@ -75,6 +91,11 @@ data class MediaRow(
     val items: List<MediaItem>,
     val subtitle: String? = null,
     val action: MediaRowAction = MediaRowAction.DETAILS,
+    /**
+     * Whether taste re-ranking may reorder this shelf. False for rows whose order is the point:
+     * a watchlist, a continue-watching shelf, or a pool that was already ranked by affinity.
+     */
+    val personalize: Boolean = true,
 )
 
 enum class MediaRowAction {
@@ -89,6 +110,8 @@ data class MarqueeSettings(
     val traktClientId: String = "",
     val traktClientSecret: String = "",
     val traktRedirectUri: String = DEFAULT_TRAKT_REDIRECT_URI,
+    val personalizedRanking: Boolean = true,
+    val ratingPrompts: Boolean = true,
 )
 
 data class ScheduledShow(

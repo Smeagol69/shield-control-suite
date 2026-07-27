@@ -272,7 +272,7 @@ class TraktClient(
                 val wrapper = optJSONObject(index) ?: continue
                 wrapper.toMediaItem(defaultType)?.let(::add)
             }
-        }.distinctBy { "${it.type.apiName}:${it.id}" }
+        }.distinctBy { it.key }
             .take(RESULT_LIMIT)
 
     private fun JSONArray.toPlaybackItems(): List<MediaItem> =
@@ -281,7 +281,7 @@ class TraktClient(
                 val wrapper = optJSONObject(index) ?: continue
                 wrapper.toPlaybackItem()?.let(::add)
             }
-        }.distinctBy { "${it.type.apiName}:${it.id}" }
+        }.distinctBy { it.key }
             .take(PLAYBACK_LIMIT)
 
     private fun JSONObject.toPlaybackItem(): MediaItem? {

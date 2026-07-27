@@ -16,16 +16,23 @@ import dev.roesler.marquee.data.MediaType
 import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.ProviderSort
 import dev.roesler.marquee.data.SettingsStore
+import dev.roesler.marquee.data.TasteStore
 import dev.roesler.marquee.data.TmdbClient
 import dev.roesler.marquee.data.TraktClient
 import dev.roesler.marquee.data.TraktDeviceCode
 import dev.roesler.marquee.data.TraktPollResult
 import dev.roesler.marquee.data.TraktStore
 import dev.roesler.marquee.data.TvMazeClient
+import dev.roesler.marquee.data.Verdict
 import dev.roesler.marquee.data.WatchOptions
 import dev.roesler.marquee.data.WatchProvider
+import dev.roesler.marquee.data.WatchSource
+import dev.roesler.marquee.data.WatchedTitle
+import dev.roesler.marquee.data.WatchHistoryStore
 import dev.roesler.marquee.data.WatchlistStore
 import dev.roesler.marquee.data.filterCatalogRows
+import dev.roesler.marquee.data.forHistory
+import dev.roesler.marquee.data.key
 import dev.roesler.marquee.playback.PlaybackMonitorService
 import dev.roesler.marquee.playback.PlaybackRecord
 import dev.roesler.marquee.playback.PlaybackCaptureService
@@ -133,6 +140,31 @@ data class PeopleUiState(
     val error: String? = null,
 )
 
+/** Asks for a verdict once a title has finished, so the taste profile keeps learning. */
+data class RatingPromptUiState(
+    val item: MediaItem,
+    val providerName: String?,
+    val episodeLabel: String?,
+    val completed: Boolean,
+) {
+    val question: String
+        get() = if (completed) {
+            "Finished ${item.title}. Did you like it?"
+        } else {
+            "You stopped watching ${item.title}. Did you like it?"
+        }
+}
+
+/** What the taste profile currently knows, for the Settings summary. */
+data class TasteUiState(
+    val ratingCount: Int,
+    val likedCount: Int,
+    val dislikedCount: Int,
+    val watchedCount: Int,
+    val topGenres: List<String>,
+    val personalizing: Boolean,
+)
+
 data class DetailUiState(
     val visible: Boolean = false,
     val loading: Boolean = false,
@@ -140,11 +172,14 @@ data class DetailUiState(
     val details: MediaDetails? = null,
     val watchOptions: WatchOptions = WatchOptions(emptyList(), null),
     val recommendations: List<MediaItem> = emptyList(),
+    val becauseYouLiked: List<MediaItem> = emptyList(),
     val inWatchlist: Boolean = false,
     val inTraktWatchlist: Boolean = false,
     val traktConnected: Boolean = false,
     val traktActionLoading: Boolean = false,
     val traktFeedback: String? = null,
+    val verdict: Verdict? = null,
+    val watched: WatchedTitle? = null,
     val error: String? = null,
 )
 
@@ -153,6 +188,8 @@ class MarqueeController(context: Context) {
     private val settingsStore = SettingsStore(appContext)
     private val watchlistStore = WatchlistStore(appContext)
     private val traktStore = TraktStore(appContext)
+    private val tasteStore = TasteStore(appContext)
+    private val watchHistoryStore = WatchHistoryStore(appContext)
     private val tmdbClient = TmdbClient(settingsStore)
     private val traktClient = TraktClient(settingsStore, traktStore)
     private val tvMazeClient = TvMazeClient()
@@ -172,8 +209,24 @@ class MarqueeController(context: Context) {
     private var traktAuthJob: Job? = null
     private var traktProfileJob: Job? = null
     private var traktActionJob: Job? = null
-    private var becauseYouLiked: MediaRow? = null
+    private var becauseYouLikedJob: Job? = null
     private var traktWatchlistKeys: Set<String> = emptySet()
+    private var genreNames: Map<Int, String> = emptyMap()
+
+    /** Home rows exactly as the services returned them, before taste or live playback. */
+    private var homeSourceRows: List<MediaRow> = emptyList()
+    private var homeNotice: String? = null
+    private var homeError: String? = null
+
+    /** Home rows after taste ranking; the live playback row is layered on top of these. */
+    private var homeRankedRows: List<MediaRow> = emptyList()
+    private var providerSourceRows: List<MediaRow> = emptyList()
+    private var providerRankedRows: List<MediaRow> = emptyList()
+    private var becauseYouLikedRows: List<MediaRow> = emptyList()
+
+    /** Identity of the last live-playback frame published into the shelves. */
+    private var lastLiveSignature: String? = null
+    private val pendingRatingPrompts = ArrayDeque<RatingPromptUiState>()
 
     private val _destination = MutableStateFlow(Destination.HOME)
     val destination: StateFlow<Destination> = _destination.asStateFlow()
@@ -201,6 +254,12 @@ class MarqueeController(context: Context) {
 
     private val _livePlayback = MutableStateFlow<LivePlaybackUiState?>(null)
     val livePlayback: StateFlow<LivePlaybackUiState?> = _livePlayback.asStateFlow()
+
+    private val _ratingPrompt = MutableStateFlow<RatingPromptUiState?>(null)
+    val ratingPrompt: StateFlow<RatingPromptUiState?> = _ratingPrompt.asStateFlow()
+
+    private val _taste = MutableStateFlow(tasteSnapshot())
+    val taste: StateFlow<TasteUiState> = _taste.asStateFlow()
 
     init {
         PlaybackMonitorService.requestConnection(appContext)
@@ -230,6 +289,8 @@ class MarqueeController(context: Context) {
 
     fun refreshHome() {
         if (_settings.value.tmdbCredential.isBlank()) {
+            homeSourceRows = emptyList()
+            homeRankedRows = emptyList()
             _home.value = HomeUiState(error = "Add a TMDB credential in Settings.")
             return
         }
@@ -241,37 +302,49 @@ class MarqueeController(context: Context) {
                 withContext(Dispatchers.IO) { loadHome(includeTrakt) }
             }.onSuccess { result ->
                 traktWatchlistKeys = result.traktWatchlistKeys
-                val rows = buildList {
+                genreNames = result.genreNames.ifEmpty { genreNames }
+                becauseYouLikedRows = result.becauseYouLikedRows
+                homeSourceRows = buildList {
                     result.localWatchlist.takeIf(List<MediaItem>::isNotEmpty)?.let {
-                        add(MediaRow("My watchlist", it, "Saved on this Shield"))
+                        add(
+                            MediaRow(
+                                title = "My watchlist",
+                                items = it,
+                                subtitle = "Saved on this Shield",
+                                personalize = false,
+                            ),
+                        )
                     }
                     result.localPlayback.takeIf(List<MediaItem>::isNotEmpty)?.let {
                         add(
                             MediaRow(
-                                "Continue watching on this Shield",
-                                it,
-                                "Second-level progress captured locally",
-                                MediaRowAction.CONTINUE_LOCAL,
+                                title = "Continue watching on this Shield",
+                                items = it,
+                                subtitle = "Second-level progress captured locally",
+                                action = MediaRowAction.CONTINUE_LOCAL,
+                                personalize = false,
                             ),
                         )
                     }
                     addAll(result.traktRows)
                     result.tvMazeRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
-                    becauseYouLiked?.let(::add)
+                    addAll(result.becauseYouLikedRows)
+                    result.watchedRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
                     addAll(result.tmdbRows)
                 }
-                _home.value = HomeUiState(
-                    rows = rows,
-                    notice = result.warnings.takeIf(List<String>::isNotEmpty)
-                        ?.joinToString("  ·  "),
-                    error = if (rows.isEmpty()) {
-                        result.warnings.firstOrNull() ?: "No discovery rows are available."
-                    } else {
-                        null
-                    },
-                )
+                homeNotice = result.warnings.takeIf(List<String>::isNotEmpty)
+                    ?.joinToString("  ·  ")
+                homeError = if (homeSourceRows.isEmpty()) {
+                    result.warnings.firstOrNull() ?: "No discovery rows are available."
+                } else {
+                    null
+                }
+                publishHome()
+                _taste.value = tasteSnapshot()
             }.onFailure { error ->
                 if (error is CancellationException) throw error
+                homeSourceRows = emptyList()
+                homeRankedRows = emptyList()
                 _home.value = HomeUiState(error = error.userMessage())
             }
         }
@@ -378,7 +451,7 @@ class MarqueeController(context: Context) {
         val item = filterCatalogRows(_providers.value.rows, _providers.value.filter)
             .asSequence()
             .flatMap { it.items.asSequence() }
-            .distinctBy { it.key() }
+            .distinctBy { it.key }
             .toList()
             .randomOrNull()
             ?: return false
@@ -495,8 +568,10 @@ class MarqueeController(context: Context) {
             loading = true,
             seed = item,
             inWatchlist = watchlistStore.contains(item),
-            inTraktWatchlist = item.key() in traktWatchlistKeys,
+            inTraktWatchlist = item.key in traktWatchlistKeys,
             traktConnected = _trakt.value.connected,
+            verdict = tasteStore.verdictOf(item),
+            watched = watchHistoryStore.entryFor(item),
         )
         detailJob = scope.launch {
             serviceResult {
@@ -509,17 +584,19 @@ class MarqueeController(context: Context) {
                     }
                 }
             }.onSuccess { (details, providers, recommendations) ->
+                // Genre ids only arrive with the detail response; feed them back so a title
+                // rated from a poster row still teaches the taste profile its genres.
+                tasteStore.enrich(details.item)
+                val profile = tasteStore.profile()
+                val watched = watchHistoryStore.watchedKeys()
                 _detail.value = _detail.value.copy(
                     loading = false,
                     details = details,
                     watchOptions = providers,
-                    recommendations = recommendations,
+                    recommendations = profile.rankByAffinity(recommendations, watched),
                 )
-                if (recommendations.isNotEmpty()) {
-                    becauseYouLiked = MediaRow(
-                        "Because you liked ${details.item.title}",
-                        recommendations,
-                    )
+                if (tasteStore.verdictOf(details.item) == Verdict.LIKED) {
+                    loadDetailSimilar(details.item)
                 }
             }.onFailure { error ->
                 if (error is CancellationException) throw error
@@ -557,6 +634,64 @@ class MarqueeController(context: Context) {
         return saved
     }
 
+    /**
+     * Records a like or a dislike for the open title. Choosing the verdict already in force
+     * clears it. The taste profile, the `Because you liked …` rows, and every ranked shelf
+     * update from the same call.
+     */
+    fun rateCurrentTitle(verdict: Verdict): Verdict? {
+        val item = currentItem() ?: return null
+        val applied = applyVerdict(item, verdict)
+        _detail.value = _detail.value.copy(
+            verdict = applied,
+            watched = watchHistoryStore.entryFor(item),
+            becauseYouLiked = if (applied == Verdict.LIKED) {
+                _detail.value.becauseYouLiked
+            } else {
+                emptyList()
+            },
+        )
+        if (applied == Verdict.LIKED) loadDetailSimilar(item)
+        return applied
+    }
+
+    fun answerRatingPrompt(verdict: Verdict) {
+        val prompt = _ratingPrompt.value ?: return
+        applyVerdict(prompt.item, verdict)
+        advanceRatingPrompt()
+    }
+
+    fun dismissRatingPrompt() {
+        _ratingPrompt.value?.let { playbackStore.markRatingHandled(it.item.key) }
+        advanceRatingPrompt()
+    }
+
+    /** Opens the detail screen for the title being asked about, keeping the prompt answered. */
+    fun openRatingPromptDetails() {
+        val prompt = _ratingPrompt.value ?: return
+        dismissRatingPrompt()
+        openDetails(prompt.item)
+    }
+
+    fun clearTasteProfile() {
+        tasteStore.clear()
+        _ratingPrompt.value = null
+        pendingRatingPrompts.clear()
+        _detail.value = _detail.value.copy(verdict = null, becauseYouLiked = emptyList())
+        becauseYouLikedRows = emptyList()
+        _taste.value = tasteSnapshot()
+        publishHome()
+        publishProviderRows()
+    }
+
+    fun clearWatchHistory() {
+        watchHistoryStore.clear()
+        _detail.value = _detail.value.copy(watched = null)
+        _taste.value = tasteSnapshot()
+        publishHome()
+        publishProviderRows()
+    }
+
     fun toggleTraktWatchlist() {
         val item = currentItem() ?: return
         if (!_trakt.value.connected) {
@@ -577,9 +712,9 @@ class MarqueeController(context: Context) {
                 }
             }.onSuccess {
                 traktWatchlistKeys = if (shouldSave) {
-                    traktWatchlistKeys + item.key()
+                    traktWatchlistKeys + item.key
                 } else {
-                    traktWatchlistKeys - item.key()
+                    traktWatchlistKeys - item.key
                 }
                 _detail.value = _detail.value.copy(
                     inTraktWatchlist = shouldSave,
@@ -616,9 +751,11 @@ class MarqueeController(context: Context) {
             serviceResult {
                 withContext(Dispatchers.IO) { traktClient.markWatched(item) }
             }.onSuccess {
+                markWatched(item, WatchSource.TRAKT)
                 _detail.value = _detail.value.copy(
                     traktActionLoading = false,
                     traktFeedback = "Marked watched on Trakt.",
+                    watched = watchHistoryStore.entryFor(item),
                 )
             }.onFailure {
                 if (it is CancellationException) throw it
@@ -628,6 +765,14 @@ class MarqueeController(context: Context) {
                 )
             }
         }
+    }
+
+    /** Adds the open title to the local watch history without involving Trakt. */
+    fun markWatchedLocally(): Boolean {
+        val item = currentItem() ?: return false
+        markWatched(item, WatchSource.MANUAL)
+        _detail.value = _detail.value.copy(watched = watchHistoryStore.entryFor(item))
+        return true
     }
 
     fun saveSettings(settings: MarqueeSettings): Result<Unit> {
@@ -667,6 +812,11 @@ class MarqueeController(context: Context) {
         if (traktCredentialsChanged || normalized.traktClientId.isBlank()) {
             _trakt.value = initialTraktState()
         }
+        if (!normalized.ratingPrompts) {
+            pendingRatingPrompts.clear()
+            _ratingPrompt.value = null
+        }
+        _taste.value = tasteSnapshot()
         _destination.value = Destination.HOME
         refreshHome()
         return Result.success(Unit)
@@ -793,8 +943,13 @@ class MarqueeController(context: Context) {
 
     fun onBack(): Boolean =
         when {
+            // The detail screen covers the banner, so it is what Back is aiming at.
             _detail.value.visible -> {
                 closeDetails()
+                true
+            }
+            _ratingPrompt.value != null -> {
+                dismissRatingPrompt()
                 true
             }
             _destination.value == Destination.PEOPLE &&
@@ -813,9 +968,171 @@ class MarqueeController(context: Context) {
         scope.cancel()
     }
 
+    // --- Taste, ratings, and watch tracking -------------------------------------------------
+
+    private fun applyVerdict(item: MediaItem, verdict: Verdict): Verdict? {
+        val applied = tasteStore.rate(item, verdict)
+        playbackStore.markRatingHandled(item.key)
+        // Rating something is a statement that you watched it, whatever the bridge saw.
+        markWatched(item, WatchSource.MANUAL)
+        _taste.value = tasteSnapshot()
+        publishHome()
+        publishProviderRows()
+        refreshBecauseYouLiked()
+        return applied
+    }
+
+    private fun markWatched(item: MediaItem, source: WatchSource) {
+        watchHistoryStore.recordWatched(item.forHistory(), source)
+    }
+
+    private fun advanceRatingPrompt() {
+        _ratingPrompt.value = pendingRatingPrompts.removeFirstOrNull()
+    }
+
+    private fun tasteSnapshot(): TasteUiState {
+        val profile = tasteStore.profile()
+        return TasteUiState(
+            ratingCount = profile.ratingCount,
+            likedCount = profile.likedKeys.size,
+            dislikedCount = profile.ratingCount - profile.likedKeys.size,
+            watchedCount = watchHistoryStore.size(),
+            topGenres = profile.topGenreIds(TOP_GENRE_LABELS)
+                .mapNotNull { genreNames[it] },
+            personalizing = _settings.value.personalizedRanking && profile.established,
+        )
+    }
+
+    /** Applies taste ranking to a set of freshly loaded rows. */
+    private fun personalize(rows: List<MediaRow>): List<MediaRow> {
+        if (!_settings.value.personalizedRanking) return rows
+        val profile = tasteStore.profile()
+        if (profile.ratingCount == 0) return rows
+        val watched = watchHistoryStore.watchedKeys()
+        return rows.mapNotNull { row ->
+            if (!row.personalize) {
+                row
+            } else {
+                val ranked = profile.rank(row.items, watched)
+                row.copy(items = ranked).takeIf { ranked.isNotEmpty() }
+            }
+        }
+    }
+
+    private fun publishHome() {
+        homeRankedRows = personalize(homeSourceRows)
+        val record = liveRecord()
+        _home.value = HomeUiState(
+            rows = withLivePlayback(homeRankedRows, record, record?.asMediaItem()),
+            notice = homeNotice,
+            error = homeError,
+        )
+    }
+
+    private fun publishProviderRows() {
+        val current = _providers.value
+        if (current.rows.isEmpty()) return
+        val provider = current.selectedProvider
+        val record = liveRecord()?.takeIf {
+            provider?.packageName != null && provider.packageName == it.packageName
+        }
+        providerRankedRows = personalize(providerSourceRows)
+        _providers.value = current.copy(
+            rows = withLivePlayback(providerRankedRows, record, record?.asMediaItem()),
+        )
+    }
+
+    private fun liveRecord(): PlaybackRecord? =
+        playbackStore.current()?.takeIf {
+            it.active &&
+                System.currentTimeMillis() - it.observedAtEpochMillis <= LIVE_SESSION_MAX_AGE_MS
+        }
+
+    /** Rebuilds `Because you liked …` rows from the most recent likes. */
+    private fun refreshBecauseYouLiked() {
+        if (_settings.value.tmdbCredential.isBlank()) return
+        // A home refresh already rebuilds these, and it owns the row order while it runs.
+        if (homeJob?.isActive == true || homeSourceRows.isEmpty()) return
+        becauseYouLikedJob?.cancel()
+        becauseYouLikedJob = scope.launch {
+            val rows = serviceResult {
+                withContext(Dispatchers.IO) { buildBecauseYouLikedRows() }
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                return@launch
+            }
+            if (rows == becauseYouLikedRows || homeSourceRows.isEmpty()) return@launch
+            val previousTitles = becauseYouLikedRows.mapTo(hashSetOf(), MediaRow::title)
+            becauseYouLikedRows = rows
+            val remaining = homeSourceRows.filterNot { it.title in previousTitles }
+            // Keep the personalized rows just above the generic TMDB shelves.
+            val anchor = remaining.indexOfFirst { it.title == FIRST_TMDB_ROW_TITLE }
+            homeSourceRows = if (anchor < 0) {
+                remaining + rows
+            } else {
+                remaining.take(anchor) + rows + remaining.drop(anchor)
+            }
+            publishHome()
+        }
+    }
+
+    private fun buildBecauseYouLikedRows(): List<MediaRow> {
+        val seeds = tasteStore.recentlyLiked(BECAUSE_YOU_LIKED_ROWS)
+        if (seeds.isEmpty()) return emptyList()
+        val profile = tasteStore.profile()
+        val watched = watchHistoryStore.watchedKeys()
+        val used = hashSetOf<String>()
+        return seeds.mapNotNull { seed ->
+            val pool = serviceResult { tmdbClient.similarTo(seed) }.getOrDefault(emptyList())
+            val items = profile
+                .rankByAffinity(pool, watched)
+                .filter { it.key != seed.key && used.add(it.key) }
+                .take(BECAUSE_YOU_LIKED_ITEMS)
+            items.takeIf(List<MediaItem>::isNotEmpty)?.let {
+                MediaRow(
+                    title = "Because you liked ${seed.title}",
+                    items = it,
+                    subtitle = becauseYouLikedSubtitle(seed),
+                    personalize = false,
+                )
+            }
+        }
+    }
+
+    private fun becauseYouLikedSubtitle(seed: MediaItem): String {
+        val genres = seed.genreIds.mapNotNull { genreNames[it] }.take(2)
+        return if (genres.isEmpty()) {
+            "Similar titles, ranked by your ratings"
+        } else {
+            "${genres.joinToString(" · ")} · ranked by your ratings"
+        }
+    }
+
+    private fun loadDetailSimilar(seed: MediaItem) {
+        scope.launch {
+            val pool = serviceResult {
+                withContext(Dispatchers.IO) { tmdbClient.similarTo(seed) }
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                return@launch
+            }
+            if (currentItem()?.key != seed.key) return@launch
+            val profile = tasteStore.profile()
+            _detail.value = _detail.value.copy(
+                becauseYouLiked = profile
+                    .rankByAffinity(pool, watchHistoryStore.watchedKeys())
+                    .take(BECAUSE_YOU_LIKED_ITEMS),
+            )
+        }
+    }
+
+    // --- Provider catalog ------------------------------------------------------------------
+
     private suspend fun loadProviderCatalog(provider: CatalogProvider) {
         val providerList = _providers.value.providers
         val activeFilter = _providers.value.filter
+        providerSourceRows = emptyList()
+        providerRankedRows = emptyList()
         _providers.value = ProvidersUiState(
             loading = true,
             providers = providerList,
@@ -907,9 +1224,14 @@ class MarqueeController(context: Context) {
         val current = _providers.value
         if (current.selectedProvider?.id != provider.id) return
         val uniqueWarnings = warnings.distinct()
+        providerSourceRows = rows.toList()
+        providerRankedRows = personalize(providerSourceRows)
+        val record = liveRecord()?.takeIf {
+            provider.packageName != null && provider.packageName == it.packageName
+        }
         _providers.value = current.copy(
             loading = loading,
-            rows = rows.toList(),
+            rows = withLivePlayback(providerRankedRows, record, record?.asMediaItem()),
             loadedCategoryCount = loadedCategories,
             totalCategoryCount = PROVIDER_SHELVES.size,
             notice = uniqueWarnings.takeIf(List<String>::isNotEmpty)?.joinToString(" | "),
@@ -921,6 +1243,8 @@ class MarqueeController(context: Context) {
             },
         )
     }
+
+    // --- Live playback ---------------------------------------------------------------------
 
     private suspend fun monitorLivePlayback() {
         var lastResolveAttempt: String? = null
@@ -946,8 +1270,11 @@ class MarqueeController(context: Context) {
             }
             val liveRecord = record.takeIf { fresh }
             _livePlayback.value = liveRecord?.toLivePlaybackUiState()
+            liveRecord?.let { trackWatchProgress(it, now) }
             applyLivePlayback(liveRecord)
-            delay(LIVE_REFRESH_INTERVAL_MS)
+            offerRatingPrompt(now)
+            // Nothing is playing, so back off instead of sweeping storage every second.
+            delay(if (fresh) LIVE_REFRESH_INTERVAL_MS else IDLE_REFRESH_INTERVAL_MS)
         }
     }
 
@@ -976,22 +1303,45 @@ class MarqueeController(context: Context) {
         )
     }
 
+    /**
+     * Publishes the live title into the shelves.
+     *
+     * The banner above the rows carries the second-by-second clock, so the shelves only need
+     * rebuilding when something a poster can show has actually changed: a different title,
+     * another whole percent of progress, or a play/pause transition. Without that guard this
+     * rebuilt every row on the screen once a second.
+     */
     private fun applyLivePlayback(record: PlaybackRecord?) {
         val liveItem = record?.asMediaItem()
+        val signature = if (record == null || liveItem == null) {
+            null
+        } else {
+            listOf(
+                liveItem.key,
+                liveItem.progressPercent?.toInt(),
+                record.state,
+                record.episodeLabel,
+            ).joinToString("|")
+        }
+        if (signature == lastLiveSignature) return
+        lastLiveSignature = signature
+
         _home.value = _home.value.copy(
-            rows = withLivePlayback(_home.value.rows, record, liveItem),
+            rows = withLivePlayback(homeRankedRows, record, liveItem),
         )
         val selected = _providers.value.selectedProvider
         val providerRecord = record.takeIf {
             selected?.packageName != null && selected.packageName == it?.packageName
         }
-        _providers.value = _providers.value.copy(
-            rows = withLivePlayback(
-                _providers.value.rows,
-                providerRecord,
-                providerRecord?.asMediaItem(),
-            ),
-        )
+        if (providerRankedRows.isNotEmpty()) {
+            _providers.value = _providers.value.copy(
+                rows = withLivePlayback(
+                    providerRankedRows,
+                    providerRecord,
+                    providerRecord?.asMediaItem(),
+                ),
+            )
+        }
     }
 
     private fun withLivePlayback(
@@ -999,15 +1349,14 @@ class MarqueeController(context: Context) {
         record: PlaybackRecord?,
         liveItem: MediaItem?,
     ): List<MediaRow> {
-        val withoutLive = rows.filterNot { it.title == LIVE_ROW_TITLE }
-        if (record == null || liveItem == null) return withoutLive
-        val key = liveItem.key()
-        val refreshed = withoutLive.map { row ->
-            row.copy(
-                items = row.items.map { item ->
-                    if (item.key() == key) liveItem else item
-                },
-            )
+        if (record == null || liveItem == null) return rows
+        val key = liveItem.key
+        val refreshed = rows.map { row ->
+            if (row.items.none { it.key == key }) {
+                row
+            } else {
+                row.copy(items = row.items.map { item -> if (item.key == key) liveItem else item })
+            }
         }
         return listOf(
             MediaRow(
@@ -1015,8 +1364,60 @@ class MarqueeController(context: Context) {
                 items = listOf(liveItem),
                 subtitle = "${record.providerName} · live from this Shield",
                 action = MediaRowAction.CONTINUE_LOCAL,
+                personalize = false,
             ),
         ) + refreshed
+    }
+
+    /** Folds the active session into the durable watch history. */
+    private fun trackWatchProgress(record: PlaybackRecord, now: Long) {
+        val media = record.media ?: return
+        val changed = watchHistoryStore.record(
+            WatchedTitle(
+                item = media.forHistory(),
+                source = WatchSource.LOCAL_PLAYBACK,
+                firstWatchedAtEpochMillis = now,
+                lastWatchedAtEpochMillis = now,
+                playCount = 1,
+                completed = record.isCompleted(now),
+                progressPercent = record.progressPercentAt(now),
+                episodeLabel = record.episodeLabel,
+                providerName = record.providerName,
+            ),
+        )
+        if (changed) _taste.value = _taste.value.copy(watchedCount = watchHistoryStore.size())
+    }
+
+    private fun offerRatingPrompt(now: Long) {
+        if (!_settings.value.ratingPrompts) return
+        val finished = playbackStore.consumeRateablePlayback(now)
+        if (finished.isEmpty()) return
+        finished.forEach { record ->
+            val media = record.media ?: return@forEach
+            if (tasteStore.verdictOf(media) != null) return@forEach
+            watchHistoryStore.record(
+                WatchedTitle(
+                    item = media.forHistory(),
+                    source = WatchSource.LOCAL_PLAYBACK,
+                    firstWatchedAtEpochMillis = record.observedAtEpochMillis,
+                    lastWatchedAtEpochMillis = record.observedAtEpochMillis,
+                    playCount = 1,
+                    completed = record.isCompleted(now),
+                    progressPercent = record.progressPercentAt(now),
+                    episodeLabel = record.episodeLabel,
+                    providerName = record.providerName,
+                ),
+            )
+            pendingRatingPrompts.addLast(
+                RatingPromptUiState(
+                    item = media.forHistory(),
+                    providerName = record.providerName,
+                    episodeLabel = record.episodeLabel,
+                    completed = record.isCompleted(now),
+                ),
+            )
+        }
+        if (_ratingPrompt.value == null) advanceRatingPrompt()
     }
 
     private fun resolvePlaybackRecord(record: PlaybackRecord): MediaItem? {
@@ -1033,17 +1434,32 @@ class MarqueeController(context: Context) {
             .firstOrNull()
     }
 
-    private fun resolvedPlaybackItems(records: List<PlaybackRecord>): List<MediaItem> =
+    /**
+     * Resolves TMDB identities for local playback records. Each unidentified record costs a
+     * search, so they run together rather than one after another.
+     */
+    private suspend fun resolvedPlaybackItems(
+        records: List<PlaybackRecord>,
+    ): List<MediaItem> = coroutineScope {
         records.asSequence()
             .filter { it.isContinuable() }
             .take(LOCAL_PLAYBACK_LIMIT)
-            .mapNotNull { record ->
-                val resolved = resolvePlaybackRecord(record) ?: return@mapNotNull null
-                if (record.media == null) playbackStore.attachMedia(record, resolved)
-                record.copy(media = resolved).asMediaItem()
-            }
-            .distinctBy { it.key() }
             .toList()
+            .chunked(RESOLVE_CONCURRENCY)
+            .flatMap { chunk ->
+                chunk.map { record ->
+                    async(Dispatchers.IO) {
+                        val resolved = serviceResult { resolvePlaybackRecord(record) }.getOrNull()
+                            ?: return@async null
+                        if (record.media == null) playbackStore.attachMedia(record, resolved)
+                        record.copy(media = resolved).asMediaItem()
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            .distinctBy { it.key }
+    }
+
+    // --- Loading ---------------------------------------------------------------------------
 
     private suspend fun buildProviderPersonalization(provider: CatalogProvider): ProviderLoad =
         coroutineScope {
@@ -1073,6 +1489,7 @@ class MarqueeController(context: Context) {
                     items = it,
                     subtitle = "Second-level local progress · ${provider.name}",
                     action = MediaRowAction.CONTINUE_LOCAL,
+                    personalize = false,
                 )
             }
             if (includeTrakt) {
@@ -1085,13 +1502,14 @@ class MarqueeController(context: Context) {
                     provider.id,
                     PLAYBACK_FILTER_LIMIT,
                 ).filterNot { traktItem ->
-                    localPlayback.any { it.key() == traktItem.key() }
+                    localPlayback.any { it.key == traktItem.key }
                 }
                 continueWatching.takeIf(List<MediaItem>::isNotEmpty)?.let {
                     personalizedRows += MediaRow(
                         title = "Continue watching",
                         items = it,
                         subtitle = "Synced progress from Trakt · available on ${provider.name}",
+                        personalize = false,
                     )
                 }
 
@@ -1104,7 +1522,7 @@ class MarqueeController(context: Context) {
                             warnings += "Trakt show recommendations unavailable"
                             emptyList()
                         }
-                    ).distinctBy { it.key() }
+                    ).distinctBy { it.key }
                 val availableRecommendations = availableOnProvider(
                     recommendations,
                     provider.id,
@@ -1195,7 +1613,7 @@ class MarqueeController(context: Context) {
         providerId: Int,
         limit: Int,
     ): List<MediaItem> {
-        val unique = items.distinctBy { it.key() }.take(limit)
+        val unique = items.distinctBy { it.key }.take(limit)
         return buildList {
             unique.chunked(AVAILABILITY_CONCURRENCY).forEach { chunk ->
                 addAll(
@@ -1216,6 +1634,7 @@ class MarqueeController(context: Context) {
     }
 
     private suspend fun loadHome(includeTrakt: Boolean): HomeLoad = coroutineScope {
+        val genreNamesTask = async { serviceResult { tmdbClient.genreNames() } }
         val localPlaybackTask = async {
             serviceResult { resolvedPlaybackItems(playbackStore.history()) }
         }
@@ -1224,7 +1643,7 @@ class MarqueeController(context: Context) {
                 serviceResult { MediaRow("Trending this week", tmdbClient.trending()) }
             },
             "Popular movies" to async {
-                serviceResult { MediaRow("Popular movies", tmdbClient.popularMovies()) }
+                serviceResult { MediaRow(FIRST_TMDB_ROW_TITLE, tmdbClient.popularMovies()) }
             },
             "Popular TV" to async {
                 serviceResult { MediaRow("Popular on TV", tmdbClient.popularTv()) }
@@ -1237,6 +1656,7 @@ class MarqueeController(context: Context) {
             },
         )
         val tvMazeTask = async { serviceResult { streamingTodayRow() } }
+        val becauseYouLikedTask = async { serviceResult { buildBecauseYouLikedRows() } }
 
         val traktRecommendationMovies = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.recommendations(MediaType.MOVIE) } }
@@ -1305,7 +1725,7 @@ class MarqueeController(context: Context) {
                         checkNotNull(traktWatchlistShows).await(),
                         "Trakt show watchlist",
                     )
-                ).distinctBy { it.key() }
+                ).distinctBy { it.key }
             val recent = collectTrakt(
                 checkNotNull(traktHistory).await(),
                 "Trakt history",
@@ -1314,18 +1734,27 @@ class MarqueeController(context: Context) {
                 checkNotNull(traktPlayback).await(),
                 "Trakt playback progress",
             ).filterNot { traktItem ->
-                localPlayback.any { it.key() == traktItem.key() }
+                localPlayback.any { it.key == traktItem.key }
             }
+
+            // Trakt history is the record of everything watched away from this Shield.
+            importTraktHistory(recent)
 
             playback.takeIf(List<MediaItem>::isNotEmpty)?.let {
                 traktRows += MediaRow(
-                    "Continue watching",
-                    it,
-                    "Synced playback progress from Trakt",
+                    title = "Continue watching",
+                    items = it,
+                    subtitle = "Synced playback progress from Trakt",
+                    personalize = false,
                 )
             }
             traktWatchlist.takeIf(List<MediaItem>::isNotEmpty)?.let {
-                traktRows += MediaRow("Your Trakt watchlist", it, "Synced with Trakt")
+                traktRows += MediaRow(
+                    title = "Your Trakt watchlist",
+                    items = it,
+                    subtitle = "Synced with Trakt",
+                    personalize = false,
+                )
             }
             recommendedMovies.takeIf(List<MediaItem>::isNotEmpty)?.let {
                 traktRows += MediaRow("Movies for you", it, "Personalized by Trakt")
@@ -1334,7 +1763,12 @@ class MarqueeController(context: Context) {
                 traktRows += MediaRow("Shows for you", it, "Personalized by Trakt")
             }
             recent.takeIf(List<MediaItem>::isNotEmpty)?.let {
-                traktRows += MediaRow("Recently watched", it, "From your Trakt history")
+                traktRows += MediaRow(
+                    title = "Recently watched",
+                    items = it,
+                    subtitle = "From your Trakt history",
+                    personalize = false,
+                )
             }
         }
 
@@ -1344,30 +1778,72 @@ class MarqueeController(context: Context) {
             tmdbRows = tmdbRows,
             traktRows = traktRows,
             tvMazeRow = tvMazeRow,
-            traktWatchlistKeys = traktWatchlist.mapTo(linkedSetOf()) { it.key() },
+            watchedRow = watchedRow(),
+            becauseYouLikedRows = becauseYouLikedTask.await().getOrDefault(emptyList()),
+            genreNames = genreNamesTask.await().getOrDefault(emptyMap()),
+            traktWatchlistKeys = traktWatchlist.mapTo(linkedSetOf()) { it.key },
             warnings = warnings,
         )
     }
 
-    private fun streamingTodayRow(): MediaRow {
-        val items = tvMazeClient.streamingToday().mapNotNull { scheduled ->
-            serviceResult {
-                tmdbClient.findTv(scheduled.imdbId, scheduled.title, scheduled.year)
-            }.getOrNull()?.let { item ->
-                val scheduleLine = listOfNotNull(
-                    scheduled.service,
-                    scheduled.episodeLabel,
-                ).joinToString(" · ")
-                item.copy(
-                    overview = if (scheduleLine.isBlank()) {
-                        item.overview
-                    } else {
-                        "$scheduleLine — ${item.overview}".trimEnd(' ', '—')
-                    },
+    private fun importTraktHistory(items: List<MediaItem>) {
+        if (items.isEmpty()) return
+        val now = System.currentTimeMillis()
+        watchHistoryStore.recordAll(
+            items.map { item ->
+                WatchedTitle(
+                    item = item.forHistory(),
+                    source = WatchSource.TRAKT,
+                    firstWatchedAtEpochMillis = now,
+                    lastWatchedAtEpochMillis = now,
+                    playCount = 1,
+                    completed = true,
+                    progressPercent = 100.0,
                 )
-            }
-        }.distinctBy { it.key() }
+            },
+        )
+    }
+
+    /** Everything Marquee has seen you watch, newest first. */
+    private fun watchedRow(): MediaRow? {
+        val watched = watchHistoryStore.recent(WATCHED_ROW_LIMIT)
+        if (watched.isEmpty()) return null
         return MediaRow(
+            title = "Everything you've watched",
+            items = watched.map { entry ->
+                entry.item.copy(contextLabel = entry.summaryLabel().takeIf(String::isNotBlank))
+            },
+            subtitle = "${watchHistoryStore.size()} titles tracked on this Shield",
+            personalize = false,
+        )
+    }
+
+    private suspend fun streamingTodayRow(): MediaRow = coroutineScope {
+        val scheduled = tvMazeClient.streamingToday()
+        val items = scheduled
+            .chunked(RESOLVE_CONCURRENCY)
+            .flatMap { chunk ->
+                chunk.map { entry ->
+                    async(Dispatchers.IO) {
+                        serviceResult {
+                            tmdbClient.findTv(entry.imdbId, entry.title, entry.year)
+                        }.getOrNull()?.let { item ->
+                            val scheduleLine = listOfNotNull(entry.service, entry.episodeLabel)
+                                .joinToString(" · ")
+                            if (scheduleLine.isBlank()) {
+                                item
+                            } else {
+                                item.copy(
+                                    overview = "$scheduleLine — ${item.overview}"
+                                        .trimEnd(' ', '—'),
+                                )
+                            }
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            .distinctBy { it.key }
+        MediaRow(
             title = "Streaming today",
             items = items,
             subtitle = "Schedule data by TVmaze",
@@ -1491,8 +1967,6 @@ class MarqueeController(context: Context) {
 
     private fun currentItem(): MediaItem? = _detail.value.details?.item ?: _detail.value.seed
 
-    private fun MediaItem.key(): String = "${type.apiName}:$id"
-
     private fun formatPlaybackTime(milliseconds: Long): String {
         val totalSeconds = milliseconds.coerceAtLeast(0L) / 1_000L
         val hours = totalSeconds / 3_600L
@@ -1523,6 +1997,9 @@ class MarqueeController(context: Context) {
         val tmdbRows: List<MediaRow>,
         val traktRows: List<MediaRow>,
         val tvMazeRow: MediaRow?,
+        val watchedRow: MediaRow?,
+        val becauseYouLikedRows: List<MediaRow>,
+        val genreNames: Map<Int, String>,
         val traktWatchlistKeys: Set<String>,
         val warnings: List<String>,
     )
@@ -1565,14 +2042,21 @@ class MarqueeController(context: Context) {
         private const val PLAYBACK_FILTER_LIMIT = 18
         private const val RECOMMENDATION_FILTER_LIMIT = 14
         private const val AVAILABILITY_CONCURRENCY = 4
+        private const val RESOLVE_CONCURRENCY = 4
         private const val PROVIDER_DISCOVERY_CONCURRENCY = 3
         private const val CORE_PROVIDER_CATEGORY_COUNT = 6
         private const val PROVIDER_SHELF_CACHE_ENTRIES = 160
         private const val PROVIDER_CACHE_TTL_MS = 30L * 60L * 1_000L
         private const val LOCAL_PLAYBACK_LIMIT = 30
         private const val LIVE_REFRESH_INTERVAL_MS = 1_000L
+        private const val IDLE_REFRESH_INTERVAL_MS = 5_000L
         private const val LIVE_SESSION_MAX_AGE_MS = 15_000L
         private const val LIVE_ROW_TITLE = "Playing now"
+        private const val FIRST_TMDB_ROW_TITLE = "Popular movies"
+        private const val BECAUSE_YOU_LIKED_ROWS = 2
+        private const val BECAUSE_YOU_LIKED_ITEMS = 20
+        private const val WATCHED_ROW_LIMIT = 30
+        private const val TOP_GENRE_LABELS = 3
         private val PROVIDER_SHELVES = listOf(
             ProviderShelfSpec("Popular movies", MediaType.MOVIE, ProviderSort.POPULAR),
             ProviderShelfSpec("Popular series", MediaType.TV, ProviderSort.POPULAR),

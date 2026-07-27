@@ -47,9 +47,13 @@ Compose for TV UI
       -> Trakt OAuth/sync/recommendations
       -> TVmaze streaming schedule
   -> private settings/session stores + local watchlist
+  -> local taste store (likes/dislikes) + watch history store
+      -> taste profile: decayed genre/type/era affinities
+      -> row ranking, dislike filtering, "Because you liked ..." seeds
   -> local playback store
       -> authorized MediaSession snapshots
       -> package-scoped visible playback labels
+      -> finished-viewing detection -> rating prompt + watch history
   -> installed-provider detection
   -> provider app or preferred resolver intent
 ```
@@ -61,6 +65,12 @@ recommendations, watchlist, and history sync. TVmaze supplies a no-key daily
 streaming schedule. A failed optional service becomes a small status notice
 instead of blanking the home screen. Provider playback remains the
 responsibility of the installed provider app.
+
+Ratings and watch history never leave the device. The taste profile is derived
+on demand from stored verdicts, so clearing the ratings in Settings removes the
+only copy and immediately restores unranked catalog ordering. Both stores keep a
+keyed in-memory index and skip writes that would not change what is displayed,
+because the playback bridge reports the active title once a second.
 
 The Providers destination fetches the current TMDB watch-provider registry for
 the configured region, moves installed Android TV apps first, and builds
