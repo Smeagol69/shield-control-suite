@@ -54,7 +54,9 @@ import dev.roesler.marquee.LivePlaybackUiState
 import dev.roesler.marquee.MarqueeController
 import dev.roesler.marquee.PeopleUiState
 import dev.roesler.marquee.ProvidersUiState
+import dev.roesler.marquee.RatingPromptUiState
 import dev.roesler.marquee.SearchUiState
+import dev.roesler.marquee.TasteUiState
 import dev.roesler.marquee.TraktPhase
 import dev.roesler.marquee.TraktUiState
 import dev.roesler.marquee.data.CatalogFilter
@@ -64,8 +66,10 @@ import dev.roesler.marquee.data.MediaItem
 import dev.roesler.marquee.data.MediaRow
 import dev.roesler.marquee.data.MediaRowAction
 import dev.roesler.marquee.data.Person
+import dev.roesler.marquee.data.Verdict
 import dev.roesler.marquee.data.WatchProvider
 import dev.roesler.marquee.data.filterCatalogRows
+import dev.roesler.marquee.data.key
 import kotlinx.coroutines.delay
 
 @Composable
@@ -75,9 +79,13 @@ fun HomeScreen(
     controller: MarqueeController,
 ) {
     var hero by remember { mutableStateOf<MediaItem?>(null) }
-    LaunchedEffect(state.rows) {
-        if (hero == null || state.rows.none { row -> hero in row.items }) {
-            hero = state.rows.firstOrNull()?.items?.firstOrNull()
+    val firstItem = state.rows.firstOrNull()?.items?.firstOrNull()
+    LaunchedEffect(state.rows, hero?.key) {
+        // Compare identities rather than whole items: live playback rewrites the item in place,
+        // and a full equality scan across every shelf is wasted work on a 960×540 Shield.
+        val heroKey = hero?.key
+        if (heroKey == null || state.rows.none { row -> row.items.any { it.key == heroKey } }) {
+            hero = firstItem
         }
     }
 
@@ -479,7 +487,7 @@ private fun MediaShelfRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
     ) {
-        items(row.items, key = { "${it.type.apiName}:${it.id}" }) { item ->
+        items(row.items, key = { it.key }) { item ->
             MediaPoster(
                 item = item,
                 onClick = {
@@ -600,7 +608,7 @@ private fun MediaGrid(items: List<MediaItem>, controller: MarqueeController) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(items, key = { "${it.type.apiName}:${it.id}" }) { item ->
+        items(items, key = { it.key }) { item ->
             MediaPoster(item, onClick = { controller.openDetails(item) })
         }
     }
@@ -626,6 +634,7 @@ private fun PeopleGrid(people: List<Person>, controller: MarqueeController) {
 fun SettingsScreen(
     saved: MarqueeSettings,
     trakt: TraktUiState,
+    taste: TasteUiState,
     controller: MarqueeController,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -642,6 +651,8 @@ fun SettingsScreen(
     var traktClientId by remember(saved) { mutableStateOf(saved.traktClientId) }
     var traktClientSecret by remember(saved) { mutableStateOf(saved.traktClientSecret) }
     var traktRedirectUri by remember(saved) { mutableStateOf(saved.traktRedirectUri) }
+    var personalizedRanking by remember(saved) { mutableStateOf(saved.personalizedRanking) }
+    var ratingPrompts by remember(saved) { mutableStateOf(saved.ratingPrompts) }
     var feedback by remember { mutableStateOf("") }
 
     fun editedSettings() = MarqueeSettings(
@@ -651,6 +662,8 @@ fun SettingsScreen(
         traktClientId = traktClientId,
         traktClientSecret = traktClientSecret,
         traktRedirectUri = traktRedirectUri,
+        personalizedRanking = personalizedRanking,
+        ratingPrompts = ratingPrompts,
     )
 
     Row(
@@ -730,6 +743,37 @@ fun SettingsScreen(
                     ActionButton("Kodi", onClick = { resolver = "org.xbmc.kodi" })
                     ActionButton("None", onClick = { resolver = "" })
                 }
+                Spacer(Modifier.height(20.dp))
+
+                AppText("RECOMMENDATIONS", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    ActionButton(
+                        label = if (personalizedRanking) {
+                            "Personalized ranking: on"
+                        } else {
+                            "Personalized ranking: off"
+                        },
+                        primary = personalizedRanking,
+                        onClick = { personalizedRanking = !personalizedRanking },
+                    )
+                    ActionButton(
+                        label = if (ratingPrompts) {
+                            "Ask after watching: on"
+                        } else {
+                            "Ask after watching: off"
+                        },
+                        primary = ratingPrompts,
+                        onClick = { ratingPrompts = !ratingPrompts },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                AppText(
+                    "Likes and dislikes stay on this Shield. They re-rank every catalog row and " +
+                        "seed the “Because you liked …” shelves. Save to apply.",
+                    11.sp,
+                    MarqueePalette.Muted,
+                )
                 Spacer(Modifier.height(20.dp))
                 ActionButton(
                     label = "Save and load Marquee",
@@ -828,6 +872,81 @@ fun SettingsScreen(
             }
             GlassPanel {
                 Column {
+                    AppText("YOUR TASTE PROFILE", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    if (taste.personalizing) {
+                                        MarqueePalette.Green
+                                    } else {
+                                        MarqueePalette.Muted
+                                    },
+                                ),
+                        )
+                        Spacer(Modifier.width(9.dp))
+                        AppText(
+                            if (taste.personalizing) {
+                                "Ranking with your ratings"
+                            } else {
+                                "Rate a few titles to start ranking"
+                            },
+                            13.sp,
+                            MarqueePalette.Text,
+                            FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    AppText(
+                        "${taste.likedCount} liked · ${taste.dislikedCount} disliked · " +
+                            "${taste.watchedCount} watched",
+                        12.sp,
+                        MarqueePalette.Muted,
+                        FontWeight.Medium,
+                    )
+                    taste.topGenres.takeIf(List<String>::isNotEmpty)?.let { genres ->
+                        Spacer(Modifier.height(6.dp))
+                        AppText(
+                            "Strongest genres: ${genres.joinToString(" · ")}",
+                            12.sp,
+                            MarqueePalette.Green,
+                            FontWeight.SemiBold,
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ActionButton(
+                            label = "Clear ratings",
+                            enabled = taste.ratingCount > 0,
+                            onClick = {
+                                controller.clearTasteProfile()
+                                Toast.makeText(
+                                    context,
+                                    "Ratings cleared.",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
+                        )
+                        ActionButton(
+                            label = "Clear watch history",
+                            enabled = taste.watchedCount > 0,
+                            onClick = {
+                                controller.clearWatchHistory()
+                                Toast.makeText(
+                                    context,
+                                    "Watch history cleared.",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
+                        )
+                    }
+                }
+            }
+            GlassPanel {
+                Column {
                     AppText("RESOLVER STATUS", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
                     Spacer(Modifier.height(12.dp))
                     ResolverStatus("Stremio", "com.stremio.one", controller)
@@ -889,7 +1008,7 @@ fun SettingsScreen(
                     AppText("PRIVACY", 10.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
                     Spacer(Modifier.height(10.dp))
                     AppText(
-                        "TMDB and Trakt credentials, OAuth tokens, and your local watchlist stay in app-private storage. Marquee has no analytics.",
+                        "TMDB and Trakt credentials, OAuth tokens, your watchlist, your watch history, and every like or dislike stay in app-private storage. Ratings are never uploaded and Marquee has no analytics.",
                         13.sp,
                         MarqueePalette.Muted,
                     )
@@ -1105,6 +1224,77 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                                 onClick = { controller.openWebOptions().show(context) },
                             )
                         }
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ActionButton(
+                                label = if (state.verdict == Verdict.LIKED) {
+                                    "👍 Liked"
+                                } else {
+                                    "👍 Like"
+                                },
+                                primary = state.verdict == Verdict.LIKED,
+                                onClick = {
+                                    val applied = controller.rateCurrentTitle(Verdict.LIKED)
+                                    Toast.makeText(
+                                        context,
+                                        if (applied == Verdict.LIKED) {
+                                            "Liked. More like this will move up."
+                                        } else {
+                                            "Rating cleared."
+                                        },
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                },
+                            )
+                            ActionButton(
+                                label = if (state.verdict == Verdict.DISLIKED) {
+                                    "👎 Not for me"
+                                } else {
+                                    "👎 Dislike"
+                                },
+                                primary = state.verdict == Verdict.DISLIKED,
+                                onClick = {
+                                    val applied = controller.rateCurrentTitle(Verdict.DISLIKED)
+                                    Toast.makeText(
+                                        context,
+                                        if (applied == Verdict.DISLIKED) {
+                                            "Noted. Marquee will stop suggesting this."
+                                        } else {
+                                            "Rating cleared."
+                                        },
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                },
+                            )
+                            if (state.watched == null) {
+                                ActionButton(
+                                    label = "Mark watched",
+                                    onClick = {
+                                        controller.markWatchedLocally()
+                                        Toast.makeText(
+                                            context,
+                                            "Added to your watch history.",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    },
+                                )
+                            }
+                        }
+                        state.watched?.let { watched ->
+                            Spacer(Modifier.height(8.dp))
+                            AppText(
+                                listOfNotNull(
+                                    "Watched",
+                                    watched.summaryLabel().takeIf(String::isNotBlank),
+                                ).joinToString(" · "),
+                                11.sp,
+                                MarqueePalette.Green,
+                                FontWeight.SemiBold,
+                            )
+                        }
                         if (state.traktConnected) {
                             Spacer(Modifier.height(10.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1182,6 +1372,28 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                 }
             }
 
+            if (state.becauseYouLiked.isNotEmpty()) {
+                item {
+                    SectionHeading(
+                        "Because you liked ${media.title}",
+                        "Similar titles, ranked by your ratings",
+                    )
+                }
+                item {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 7.dp),
+                    ) {
+                        items(state.becauseYouLiked, key = { it.key }) { similar ->
+                            MediaPoster(
+                                similar,
+                                onClick = { controller.openDetails(similar) },
+                            )
+                        }
+                    }
+                }
+            }
+
             if (state.recommendations.isNotEmpty()) {
                 item { SectionHeading("More like this") }
                 item {
@@ -1189,10 +1401,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(vertical = 7.dp),
                     ) {
-                        items(
-                            state.recommendations,
-                            key = { "${it.type.apiName}:${it.id}" },
-                        ) { recommendation ->
+                        items(state.recommendations, key = { it.key }) { recommendation ->
                             MediaPoster(
                                 recommendation,
                                 onClick = { controller.openDetails(recommendation) },
@@ -1202,6 +1411,68 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                 }
             }
         }
+    }
+}
+
+/**
+ * The post-playback prompt. It sits above whatever tab is open, so a verdict can be given with
+ * two presses of the remote as soon as something finishes.
+ */
+@Composable
+fun RatingPromptBanner(state: RatingPromptUiState, controller: MarqueeController) {
+    val requester = remember { FocusRequester() }
+    LaunchedEffect(state.item.key) {
+        runCatching { requester.requestFocus() }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MarqueePalette.PanelSolid)
+            .border(1.dp, MarqueePalette.Gold.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 16.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        RemoteImage(
+            url = state.item.posterUrl,
+            description = state.item.title,
+            modifier = Modifier
+                .width(38.dp)
+                .height(57.dp)
+                .clip(RoundedCornerShape(7.dp)),
+            contentScale = ContentScale.Crop,
+        )
+        Column(Modifier.weight(1f)) {
+            AppText("RATE WHAT YOU WATCHED", 9.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+            Spacer(Modifier.height(4.dp))
+            AppText(
+                state.question,
+                15.sp,
+                MarqueePalette.Text,
+                FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            listOfNotNull(state.providerName, state.episodeLabel)
+                .joinToString(" · ")
+                .takeIf(String::isNotBlank)
+                ?.let {
+                    AppText(it, 10.sp, MarqueePalette.Muted, FontWeight.Medium)
+                }
+        }
+        ActionButton(
+            label = "👍 Liked it",
+            primary = true,
+            onClick = { controller.answerRatingPrompt(Verdict.LIKED) },
+            modifier = Modifier.focusRequester(requester),
+        )
+        ActionButton(
+            label = "👎 Not for me",
+            onClick = { controller.answerRatingPrompt(Verdict.DISLIKED) },
+        )
+        ActionButton(label = "Details", onClick = controller::openRatingPromptDetails)
+        ActionButton(label = "Skip", onClick = controller::dismissRatingPrompt)
     }
 }
 

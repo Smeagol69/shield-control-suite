@@ -11,7 +11,14 @@ legacy package ID `dev.roesler.marquee`.
   explicit search submission, and dedicated filmography views.
 - Details, runtime or season information, recommendations, and a local
   watchlist, plus a cast row that opens each person's filmography.
-- A dynamic `Because you liked …` row based on the last opened title.
+- Like and dislike on every detail screen, plus a prompt that appears on its own
+  once something finishes so a verdict costs two presses of the remote.
+- A local watch history that folds together the playback bridge, Trakt history,
+  and explicit mark-watched actions into one `Everything you've watched` shelf.
+- Taste-ranked discovery: every catalog row is re-ordered from your ratings, and
+  disliked titles stop being suggested.
+- `Because you liked …` rows on the home screen and on the detail screen of any
+  title you liked, built from TMDB similar titles and ranked by the same profile.
 - Regional `Where to watch` data with installed-provider detection.
 - A provider hub inspired by native TV launchers: live regional provider tabs,
   installed apps first, 26 provider-filtered discovery categories, and
@@ -66,9 +73,12 @@ does not guess a season or episode.
 8. Enable the local playback bridge once using
    `tools/enable-playback-bridge.ps1`. Android remembers both grants across
    upgrades.
+9. Optional: turn personalized ranking or the post-playback rating prompt off
+   under `RECOMMENDATIONS`. Both are on by default.
 
-TMDB/Trakt credentials, Trakt OAuth tokens, and the local watchlist stay in
-application-private storage. No credential is compiled into the APK. Image
+TMDB/Trakt credentials, Trakt OAuth tokens, the local watchlist, the watch
+history, and every like or dislike stay in application-private storage. Ratings
+are never uploaded to any service. No credential is compiled into the APK. Image
 requests are restricted to the TMDB, Trakt, and TVmaze media hosts.
 
 Trakt access tokens are refreshed before expiry. Changing any Trakt application
@@ -78,6 +88,41 @@ local session.
 
 TVmaze requires no API key. Schedule data is used under CC BY-SA and the app
 links back to TVmaze from Settings.
+
+## Ratings and the taste profile
+
+Marquee learns from likes and dislikes only. Nothing is inferred from what you
+merely opened.
+
+Each verdict contributes a decayed weight of `±0.5^(ageDays / 180)`, so an
+opinion keeps half its influence after six months instead of counting forever. A
+verdict is spread across the title's TMDB genres divided by `sqrt(genreCount)`,
+so a six-genre film cannot outvote a focused one, and the accumulated sums are
+squashed into `(-1, 1)` so a long run of one genre cannot drown out the rest of
+the formula. Affinity for a candidate is then
+
+```text
+0.50 × genre + 0.18 × movie/series + 0.20 × TMDB rating + 0.12 × era
+```
+
+Catalog rows keep their source ordering, which carries real meaning — "popular on
+Netflix" should still look popular. Taste is added on top as
+`confidence × affinity`, where confidence is `ratedWeight / (ratedWeight + 6)`.
+An unrated profile therefore leaves every row byte-for-byte as the service
+returned it, three ratings are the floor before any reordering happens, and a
+well-trained profile lifts a strong match by roughly a third of the row.
+`Because you liked …` shelves have no meaningful source order, so those are
+sorted by affinity alone. Titles you already watched are pushed down, and titles
+you disliked are removed outright.
+
+The formula, the decay, and the history merge are covered by unit tests in
+`src/test/java/dev/roesler/marquee/data`.
+
+Rating prompts appear when a viewing ends: either playback ran past the credits
+threshold, or a session that had played for at least ten minutes stopped or went
+silent. Each title is offered once — skipping is an answer. Both the prompt and
+the ranking can be turned off in Settings, which also shows what the profile has
+learned and can clear the ratings or the watch history.
 
 ## Real-time playback bridge
 
@@ -95,7 +140,7 @@ progress, but cannot provide exact local progress through this interface.
 
 ## Legacy upgrade
 
-The native app uses version code 9 and the same application ID as the legacy
+The native app uses version code 11 and the same application ID as the legacy
 WebView build. Android permits an in-place upgrade only when both APKs use the
 same signing certificate.
 

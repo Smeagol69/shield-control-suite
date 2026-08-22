@@ -19,6 +19,8 @@ class SettingsStore(context: Context) {
             .getString(KEY_TRAKT_REDIRECT_URI, DEFAULT_TRAKT_REDIRECT_URI)
             .orEmpty()
             .ifBlank { DEFAULT_TRAKT_REDIRECT_URI },
+        personalizedRanking = preferences.getBoolean(KEY_PERSONALIZED_RANKING, true),
+        ratingPrompts = preferences.getBoolean(KEY_RATING_PROMPTS, true),
     )
 
     fun save(settings: MarqueeSettings) {
@@ -32,6 +34,8 @@ class SettingsStore(context: Context) {
                 KEY_TRAKT_REDIRECT_URI,
                 settings.traktRedirectUri.trim().ifBlank { DEFAULT_TRAKT_REDIRECT_URI },
             )
+            putBoolean(KEY_PERSONALIZED_RANKING, settings.personalizedRanking)
+            putBoolean(KEY_RATING_PROMPTS, settings.ratingPrompts)
         }
     }
 
@@ -62,5 +66,7 @@ class SettingsStore(context: Context) {
         private const val KEY_TRAKT_REDIRECT_URI = "trakt_redirect_uri"
         private const val KEY_LEGACY_MIGRATION_ATTEMPTED = "legacy_migration_attempted"
         private const val KEY_LAST_PROVIDER_ID = "last_provider_id"
+        private const val KEY_PERSONALIZED_RANKING = "personalized_ranking"
+        private const val KEY_RATING_PROMPTS = "rating_prompts"
     }
 }

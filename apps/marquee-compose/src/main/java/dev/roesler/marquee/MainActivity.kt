@@ -45,6 +45,7 @@ import dev.roesler.marquee.ui.LocalMarqueeLayout
 import dev.roesler.marquee.ui.MarqueePalette
 import dev.roesler.marquee.ui.PeopleScreen
 import dev.roesler.marquee.ui.ProvidersScreen
+import dev.roesler.marquee.ui.RatingPromptBanner
 import dev.roesler.marquee.ui.SearchScreen
 import dev.roesler.marquee.ui.SettingsScreen
 import dev.roesler.marquee.ui.marqueeLayout
@@ -132,7 +133,9 @@ private fun MarqueeApp(controller: MarqueeController) {
     val detail by controller.detail.collectAsState()
     val settings by controller.settings.collectAsState()
     val trakt by controller.trakt.collectAsState()
+    val taste by controller.taste.collectAsState()
     val livePlayback by controller.livePlayback.collectAsState()
+    val ratingPrompt by controller.ratingPrompt.collectAsState()
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val layout = remember(maxWidth, maxHeight) {
@@ -157,14 +160,21 @@ private fun MarqueeApp(controller: MarqueeController) {
                     ) {
                         MarqueeHeader(destination, controller)
                         Spacer(Modifier.height(layout.headerContentGap))
-                        Box(Modifier.fillMaxSize()) {
+                        ratingPrompt?.let { prompt ->
+                            RatingPromptBanner(prompt, controller)
+                            Spacer(Modifier.height(layout.headerContentGap))
+                        }
+                        // Weighted, not fillMaxSize: the header and the rating banner take their
+                        // height first, and the active screen gets whatever is left.
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
                             when (destination) {
                                 Destination.HOME -> HomeScreen(home, livePlayback, controller)
                                 Destination.PROVIDERS ->
                                     ProvidersScreen(providers, livePlayback, controller)
                                 Destination.SEARCH -> SearchScreen(search, controller)
                                 Destination.PEOPLE -> PeopleScreen(people, controller)
-                                Destination.SETTINGS -> SettingsScreen(settings, trakt, controller)
+                                Destination.SETTINGS ->
+                                    SettingsScreen(settings, trakt, taste, controller)
                             }
                         }
                     }
