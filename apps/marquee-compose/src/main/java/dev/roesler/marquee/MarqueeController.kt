@@ -331,6 +331,7 @@ class MarqueeController(context: Context) {
                     addAll(result.becauseYouLikedRows)
                     result.watchedRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
                     addAll(result.tmdbRows)
+                    addAll(result.genreRows)
                 }
                 homeNotice = result.warnings.takeIf(List<String>::isNotEmpty)
                     ?.joinToString("  ·  ")
@@ -897,6 +898,9 @@ class MarqueeController(context: Context) {
 
     fun openWebOptions(): LaunchResult =
         launcher.openWebOptions(_detail.value.watchOptions.webLink)
+
+    fun openTrailer(): LaunchResult =
+        launcher.openTrailer(_detail.value.details?.trailerUrl)
 
     fun openTraktActivation(): LaunchResult {
         val state = _trakt.value
@@ -1657,6 +1661,9 @@ class MarqueeController(context: Context) {
         )
         val tvMazeTask = async { serviceResult { streamingTodayRow() } }
         val becauseYouLikedTask = async { serviceResult { buildBecauseYouLikedRows() } }
+        val genreTasks = HOME_GENRE_SHELVES.map { shelf ->
+            shelf.label to async { serviceResult { buildGenreRow(shelf) } }
+        }
 
         val traktRecommendationMovies = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.recommendations(MediaType.MOVIE) } }
@@ -1687,6 +1694,15 @@ class MarqueeController(context: Context) {
                 onSuccess = { it.takeIf { row -> row.items.isNotEmpty() } },
                 onFailure = {
                     warnings += "$label unavailable"
+                    null
+                },
+            )
+        }
+        val genreRows = genreTasks.mapNotNull { (label, task) ->
+            task.await().fold(
+                onSuccess = { it.takeIf { row -> row.items.isNotEmpty() } },
+                onFailure = {
+                    warnings += "$label category unavailable"
                     null
                 },
             )
@@ -1776,6 +1792,7 @@ class MarqueeController(context: Context) {
             localWatchlist = watchlistStore.load(),
             localPlayback = localPlayback,
             tmdbRows = tmdbRows,
+            genreRows = genreRows,
             traktRows = traktRows,
             tvMazeRow = tvMazeRow,
             watchedRow = watchedRow(),
@@ -1816,6 +1833,42 @@ class MarqueeController(context: Context) {
             subtitle = "${watchHistoryStore.size()} titles tracked on this Shield",
             personalize = false,
         )
+    }
+
+    /** One Home category shelf: popular movies and shows in a genre, merged and interleaved. */
+    private suspend fun buildGenreRow(shelf: HomeGenreShelf): MediaRow = coroutineScope {
+        val movieTask = async(Dispatchers.IO) {
+            tmdbClient.genreTitles(shelf.movieGenreId, MediaType.MOVIE)
+        }
+        val showTask = shelf.tvGenreId?.let { tvId ->
+            async(Dispatchers.IO) { tmdbClient.genreTitles(tvId, MediaType.TV) }
+        }
+        val movies = movieTask.await()
+        val shows = showTask?.await() ?: emptyList()
+        MediaRow(
+            title = shelf.label,
+            items = interleaveByType(movies, shows)
+                .distinctBy { it.key }
+                .take(HOME_GENRE_SHELF_ITEMS),
+            subtitle = "Browse ${shelf.label}",
+        )
+    }
+
+    /** Alternates two lists so a merged genre shelf mixes films and series instead of grouping them. */
+    private fun interleaveByType(
+        first: List<MediaItem>,
+        second: List<MediaItem>,
+    ): List<MediaItem> {
+        if (first.isEmpty()) return second
+        if (second.isEmpty()) return first
+        val merged = ArrayList<MediaItem>(first.size + second.size)
+        val a = first.iterator()
+        val b = second.iterator()
+        while (a.hasNext() || b.hasNext()) {
+            if (a.hasNext()) merged += a.next()
+            if (b.hasNext()) merged += b.next()
+        }
+        return merged
     }
 
     private suspend fun streamingTodayRow(): MediaRow = coroutineScope {
@@ -1995,6 +2048,7 @@ class MarqueeController(context: Context) {
         val localWatchlist: List<MediaItem>,
         val localPlayback: List<MediaItem>,
         val tmdbRows: List<MediaRow>,
+        val genreRows: List<MediaRow>,
         val traktRows: List<MediaRow>,
         val tvMazeRow: MediaRow?,
         val watchedRow: MediaRow?,
@@ -2002,6 +2056,12 @@ class MarqueeController(context: Context) {
         val genreNames: Map<Int, String>,
         val traktWatchlistKeys: Set<String>,
         val warnings: List<String>,
+    )
+
+    private data class HomeGenreShelf(
+        val label: String,
+        val movieGenreId: Int,
+        val tvGenreId: Int?,
     )
 
     private data class ProviderLoad(
@@ -2185,6 +2245,21 @@ class MarqueeController(context: Context) {
                 GENRE_ANIMATION,
             ),
         )
+        /**
+         * Genre browse shelves for Home. Each merges a movie genre with its closest TV genre
+         * so one "Comedy"/"Action"/… row spans both. Taste ranking reorders the items per row.
+         */
+        private val HOME_GENRE_SHELVES = listOf(
+            HomeGenreShelf("Comedy", MOVIE_GENRE_COMEDY, MOVIE_GENRE_COMEDY),
+            HomeGenreShelf("Action", MOVIE_GENRE_ACTION, TV_GENRE_ACTION_ADVENTURE),
+            HomeGenreShelf("Sci-Fi & Fantasy", MOVIE_GENRE_SCIFI, TV_GENRE_SCIFI_FANTASY),
+            HomeGenreShelf("Drama", GENRE_DRAMA, GENRE_DRAMA),
+            HomeGenreShelf("Horror", MOVIE_GENRE_HORROR, null),
+            HomeGenreShelf("Thriller", MOVIE_GENRE_THRILLER, null),
+            HomeGenreShelf("Animation", GENRE_ANIMATION, GENRE_ANIMATION),
+            HomeGenreShelf("Documentaries", GENRE_DOCUMENTARY, GENRE_DOCUMENTARY),
+        )
+        private const val HOME_GENRE_SHELF_ITEMS = 24
         private val ANDROID_PACKAGE =
             Regex("""^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$""")
     }

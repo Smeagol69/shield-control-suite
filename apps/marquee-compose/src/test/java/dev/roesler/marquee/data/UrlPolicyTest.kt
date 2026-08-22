@@ -64,4 +64,14 @@ class UrlPolicyTest {
         assertTrue(UrlPolicy.isTrustedServiceWeb("https://www.tvmaze.com"))
         assertFalse(UrlPolicy.isTrustedServiceWeb("https://tvmaze.com.example.org"))
     }
+
+    @Test
+    fun trailersStayOnYouTubeHosts() {
+        assertTrue(UrlPolicy.isTrailerWeb("https://www.youtube.com/watch?v=abc123"))
+        assertTrue(UrlPolicy.isTrailerWeb("https://youtube.com/watch?v=abc123"))
+        assertTrue(UrlPolicy.isTrailerWeb("https://youtu.be/abc123"))
+        assertFalse(UrlPolicy.isTrailerWeb("http://www.youtube.com/watch?v=abc123"))
+        assertFalse(UrlPolicy.isTrailerWeb("https://youtube.com.evil.example/watch?v=x"))
+        assertFalse(UrlPolicy.isTrailerWeb(null))
+    }
 }

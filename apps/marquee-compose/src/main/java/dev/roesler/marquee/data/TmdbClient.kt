@@ -110,6 +110,27 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         )
     }
 
+    /**
+     * Popular titles within one TMDB genre for the Home category shelves. Deliberately a
+     * single page: category rows are browse shelves fetched many-at-once on Home, not the
+     * deep multi-page catalogs the provider hub builds.
+     */
+    fun genreTitles(genreId: Int, type: MediaType): List<MediaItem> {
+        require(genreId > 0) { "Genre ID must be positive." }
+        return mediaList(
+            request(
+                "/discover/${type.apiName}",
+                mapOf(
+                    "with_genres" to genreId.toString(),
+                    "sort_by" to "popularity.desc",
+                    "include_adult" to "false",
+                    "vote_count.gte" to "50",
+                ),
+            ),
+            type,
+        )
+    }
+
     fun searchTitles(query: String): List<MediaItem> =
         mediaList(request("/search/multi", mapOf("query" to query)))
             .filter { it.title.isNotBlank() }
@@ -162,7 +183,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun details(item: MediaItem): MediaDetails {
         val json = request(
             "/${item.type.apiName}/${item.id}",
-            mapOf("append_to_response" to "external_ids,credits"),
+            mapOf("append_to_response" to "external_ids,credits,videos"),
         )
         val normalized = mediaItem(json, item.type) ?: item
         val genres = json.optJSONArray("genres")
@@ -184,6 +205,17 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 )
             }
             .toList()
+        val trailerUrl = json.optJSONObject("videos")?.optJSONArray("results")
+            .toObjectSequence()
+            .filter { it.optString("site").equals("YouTube", ignoreCase = true) }
+            .filter { it.optString("key").isNotBlank() }
+            .sortedByDescending { video ->
+                (if (video.optString("type").equals("Trailer", ignoreCase = true)) 2 else 0) +
+                    (if (video.optBoolean("official")) 1 else 0)
+            }
+            .firstOrNull()
+            ?.optString("key")
+            ?.let { key -> "https://www.youtube.com/watch?v=$key" }
         return MediaDetails(
             item = normalized.copy(
                 posterUrl = normalized.posterUrl ?: item.posterUrl,
@@ -194,6 +226,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 ?: json.optJSONArray("episode_run_time")?.optInt(0)?.takeIf { it > 0 },
             seasons = json.optInt("number_of_seasons").takeIf { it > 0 },
             cast = cast,
+            trailerUrl = trailerUrl,
         )
     }
 
