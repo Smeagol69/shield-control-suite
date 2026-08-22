@@ -326,6 +326,7 @@ class MarqueeController(context: Context) {
                             ),
                         )
                     }
+                    result.freeRow?.let(::add)
                     addAll(result.traktRows)
                     result.tvMazeRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
                     addAll(result.becauseYouLikedRows)
@@ -1612,6 +1613,34 @@ class MarqueeController(context: Context) {
         }
     }
 
+    /** A shelf of titles you can stream free (with ads) on a free app already on this Shield. */
+    private suspend fun buildFreeRow(): MediaRow? = coroutineScope {
+        val installedIds = FREE_PROVIDER_PACKAGES
+            .filterValues { launcher.isInstalled(it) }
+            .keys
+            .toList()
+        if (installedIds.isEmpty()) return@coroutineScope null
+        val movieTask = async {
+            serviceResult { tmdbClient.freeTitles(installedIds, MediaType.MOVIE) }
+                .getOrDefault(emptyList())
+        }
+        val tvTask = async {
+            serviceResult { tmdbClient.freeTitles(installedIds, MediaType.TV) }
+                .getOrDefault(emptyList())
+        }
+        interleaveByType(movieTask.await(), tvTask.await())
+            .distinctBy { it.key }
+            .take(FREE_ROW_LIMIT)
+            .takeIf(List<MediaItem>::isNotEmpty)
+            ?.let {
+                MediaRow(
+                    title = "Free on your apps",
+                    items = it,
+                    subtitle = "Free with ads on apps installed on this Shield",
+                )
+            }
+    }
+
     private suspend fun availableOnProvider(
         items: List<MediaItem>,
         providerId: Int,
@@ -1664,6 +1693,7 @@ class MarqueeController(context: Context) {
         val genreTasks = HOME_GENRE_SHELVES.map { shelf ->
             shelf.label to async { serviceResult { buildGenreRow(shelf) } }
         }
+        val freeRowTask = async { serviceResult { buildFreeRow() } }
 
         val traktRecommendationMovies = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.recommendations(MediaType.MOVIE) } }
@@ -1706,6 +1736,10 @@ class MarqueeController(context: Context) {
                     null
                 },
             )
+        }
+        val freeRow = freeRowTask.await().getOrElse {
+            warnings += "Free-on-your-apps row unavailable"
+            null
         }
         val tvMazeRow = tvMazeTask.await().fold(
             onSuccess = { it.takeIf { row -> row.items.isNotEmpty() } },
@@ -1791,6 +1825,7 @@ class MarqueeController(context: Context) {
         HomeLoad(
             localWatchlist = watchlistStore.load(),
             localPlayback = localPlayback,
+            freeRow = freeRow,
             tmdbRows = tmdbRows,
             genreRows = genreRows,
             traktRows = traktRows,
@@ -2047,6 +2082,7 @@ class MarqueeController(context: Context) {
     private data class HomeLoad(
         val localWatchlist: List<MediaItem>,
         val localPlayback: List<MediaItem>,
+        val freeRow: MediaRow?,
         val tmdbRows: List<MediaRow>,
         val genreRows: List<MediaRow>,
         val traktRows: List<MediaRow>,
@@ -2116,6 +2152,20 @@ class MarqueeController(context: Context) {
         private const val BECAUSE_YOU_LIKED_ROWS = 2
         private const val BECAUSE_YOU_LIKED_ITEMS = 20
         private const val WATCHED_ROW_LIMIT = 30
+        private const val FREE_ROW_LIMIT = 20
+
+        /**
+         * Free / ad-supported services (TMDB provider id → Android TV package). The Home
+         * "Free on your apps" shelf discovers titles from whichever of these is installed.
+         */
+        private val FREE_PROVIDER_PACKAGES = mapOf(
+            73 to "com.tubitv",                        // Tubi
+            300 to "tv.pluto.android",                 // Pluto TV
+            12 to "com.gotv.crackle.handset",          // Crackle
+            538 to "com.plexapp.android",              // Plex
+            613 to "com.amazon.amazonvideo.livingroom", // Amazon Freevee (in Prime Video)
+            1049 to "com.xumo.xumo.tv",                // Xumo Play
+        )
         private const val TOP_GENRE_LABELS = 3
         private val PROVIDER_SHELVES = listOf(
             ProviderShelfSpec("Popular movies", MediaType.MOVIE, ProviderSort.POPULAR),

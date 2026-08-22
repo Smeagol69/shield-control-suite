@@ -68,6 +68,19 @@ data class WatchProvider(
     val access: String,
 )
 
+/** The access tiers TmdbClient assigns from TMDB's monetization buckets. */
+object WatchAccess {
+    const val STREAM = "Stream"
+    const val FREE = "Free"
+    const val ADS = "With ads"
+    const val RENT = "Rent"
+    const val BUY = "Buy"
+}
+
+/** Watchable at no cost — fully free or ad-supported. */
+val WatchProvider.isFreeWithAds: Boolean
+    get() = access == WatchAccess.FREE || access == WatchAccess.ADS
+
 data class WatchOptions(
     val providers: List<WatchProvider>,
     val webLink: String?,

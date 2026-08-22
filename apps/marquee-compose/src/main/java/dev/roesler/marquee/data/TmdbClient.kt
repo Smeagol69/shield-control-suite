@@ -131,6 +131,29 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         )
     }
 
+    /**
+     * Titles offered free / ad-supported on the given providers in the user's region. Single
+     * page — this backs one Home shelf, and the providers are already the free ones the viewer
+     * has installed, so the catalog is naturally focused.
+     */
+    fun freeTitles(providerIds: List<Int>, type: MediaType): List<MediaItem> {
+        if (providerIds.isEmpty()) return emptyList()
+        val settings = settingsStore.load()
+        return mediaList(
+            request(
+                "/discover/${type.apiName}",
+                mapOf(
+                    "watch_region" to settings.region,
+                    "with_watch_providers" to providerIds.joinToString("|"),
+                    "with_watch_monetization_types" to "free|ads",
+                    "sort_by" to "popularity.desc",
+                    "include_adult" to "false",
+                ),
+            ),
+            type,
+        )
+    }
+
     fun searchTitles(query: String): List<MediaItem> =
         mediaList(request("/search/multi", mapOf("query" to query)))
             .filter { it.title.isNotBlank() }
@@ -285,11 +308,11 @@ class TmdbClient(private val settingsStore: SettingsStore) {
 
         val providers = linkedMapOf<Int, WatchProvider>()
         listOf(
-            "flatrate" to "Stream",
-            "free" to "Free",
-            "ads" to "With ads",
-            "rent" to "Rent",
-            "buy" to "Buy",
+            "flatrate" to WatchAccess.STREAM,
+            "free" to WatchAccess.FREE,
+            "ads" to WatchAccess.ADS,
+            "rent" to WatchAccess.RENT,
+            "buy" to WatchAccess.BUY,
         ).forEach { (arrayName, access) ->
             val values = region.optJSONArray(arrayName) ?: JSONArray()
             for (index in 0 until values.length()) {
@@ -531,6 +554,13 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             283 to "com.crunchyroll.crunchyroid",
             257 to "tv.fubo.mobile",
             1770 to "com.paramount.android.pplus",
+            // Free / ad-supported services (no subscription needed).
+            73 to "com.tubitv",
+            300 to "tv.pluto.android",
+            12 to "com.gotv.crackle.handset",
+            538 to "com.plexapp.android",
+            613 to "com.amazon.amazonvideo.livingroom", // Amazon Freevee (folded into Prime Video)
+            1049 to "com.xumo.xumo.tv",
         )
 
         private val PROVIDER_PACKAGE_NAMES = mapOf(
@@ -548,6 +578,14 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             "peacock premium plus" to "com.peacocktv.peacockandroid",
             "crunchyroll" to "com.crunchyroll.crunchyroid",
             "fubotv" to "tv.fubo.mobile",
+            // Free / ad-supported services.
+            "tubi tv" to "com.tubitv",
+            "pluto tv" to "tv.pluto.android",
+            "crackle" to "com.gotv.crackle.handset",
+            "plex" to "com.plexapp.android",
+            "amazon freevee" to "com.amazon.amazonvideo.livingroom",
+            "freevee" to "com.amazon.amazonvideo.livingroom",
+            "xumo play" to "com.xumo.xumo.tv",
         )
 
         private val MAJOR_PROVIDER_NAMES = listOf(
