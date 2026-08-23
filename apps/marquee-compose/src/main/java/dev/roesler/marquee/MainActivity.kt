@@ -29,6 +29,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -136,6 +137,9 @@ private fun MarqueeApp(controller: MarqueeController) {
     val taste by controller.taste.collectAsState()
     val livePlayback by controller.livePlayback.collectAsState()
     val ratingPrompt by controller.ratingPrompt.collectAsState()
+    // Retains each tab's scroll/focus state so returning from a title detail — or switching
+    // tabs — lands where you left off instead of resetting to the top.
+    val stateHolder = rememberSaveableStateHolder()
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val layout = remember(maxWidth, maxHeight) {
@@ -167,14 +171,17 @@ private fun MarqueeApp(controller: MarqueeController) {
                         // Weighted, not fillMaxSize: the header and the rating banner take their
                         // height first, and the active screen gets whatever is left.
                         Box(Modifier.weight(1f).fillMaxWidth()) {
-                            when (destination) {
-                                Destination.HOME -> HomeScreen(home, livePlayback, controller)
-                                Destination.PROVIDERS ->
-                                    ProvidersScreen(providers, livePlayback, controller)
-                                Destination.SEARCH -> SearchScreen(search, controller)
-                                Destination.PEOPLE -> PeopleScreen(people, controller)
-                                Destination.SETTINGS ->
-                                    SettingsScreen(settings, trakt, taste, controller)
+                            stateHolder.SaveableStateProvider(destination) {
+                                when (destination) {
+                                    Destination.HOME ->
+                                        HomeScreen(home, livePlayback, controller)
+                                    Destination.PROVIDERS ->
+                                        ProvidersScreen(providers, livePlayback, controller)
+                                    Destination.SEARCH -> SearchScreen(search, controller)
+                                    Destination.PEOPLE -> PeopleScreen(people, controller)
+                                    Destination.SETTINGS ->
+                                        SettingsScreen(settings, trakt, taste, controller)
+                                }
                             }
                         }
                     }
