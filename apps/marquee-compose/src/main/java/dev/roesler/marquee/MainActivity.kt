@@ -29,6 +29,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -136,6 +137,7 @@ private fun MarqueeApp(controller: MarqueeController) {
     val taste by controller.taste.collectAsState()
     val livePlayback by controller.livePlayback.collectAsState()
     val ratingPrompt by controller.ratingPrompt.collectAsState()
+    val screenState = rememberSaveableStateHolder()
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val layout = remember(maxWidth, maxHeight) {
@@ -167,14 +169,21 @@ private fun MarqueeApp(controller: MarqueeController) {
                         // Weighted, not fillMaxSize: the header and the rating banner take their
                         // height first, and the active screen gets whatever is left.
                         Box(Modifier.weight(1f).fillMaxWidth()) {
-                            when (destination) {
-                                Destination.HOME -> HomeScreen(home, livePlayback, controller)
-                                Destination.PROVIDERS ->
-                                    ProvidersScreen(providers, livePlayback, controller)
-                                Destination.SEARCH -> SearchScreen(search, controller)
-                                Destination.PEOPLE -> PeopleScreen(people, controller)
-                                Destination.SETTINGS ->
-                                    SettingsScreen(settings, trakt, taste, controller)
+                            // Opening a title removes this whole subtree from composition, which
+                            // would otherwise throw away every shelf's scroll offset and send you
+                            // back to the top of the page. The holder lives above that branch, so
+                            // each tab's saved state is put back exactly as it was left — on
+                            // return from a detail screen and on tab switches alike.
+                            screenState.SaveableStateProvider(destination.name) {
+                                when (destination) {
+                                    Destination.HOME -> HomeScreen(home, livePlayback, controller)
+                                    Destination.PROVIDERS ->
+                                        ProvidersScreen(providers, livePlayback, controller)
+                                    Destination.SEARCH -> SearchScreen(search, controller)
+                                    Destination.PEOPLE -> PeopleScreen(people, controller)
+                                    Destination.SETTINGS ->
+                                        SettingsScreen(settings, trakt, taste, controller)
+                                }
                             }
                         }
                     }

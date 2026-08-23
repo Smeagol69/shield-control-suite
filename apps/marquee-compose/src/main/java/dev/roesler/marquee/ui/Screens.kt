@@ -28,11 +28,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,15 +82,16 @@ fun HomeScreen(
     livePlayback: LivePlaybackUiState?,
     controller: MarqueeController,
 ) {
-    var hero by remember { mutableStateOf<MediaItem?>(null) }
-    val firstItem = state.rows.firstOrNull()?.items?.firstOrNull()
-    LaunchedEffect(state.rows, hero?.key) {
-        // Compare identities rather than whole items: live playback rewrites the item in place,
-        // and a full equality scan across every shelf is wasted work on a 960×540 Shield.
-        val heroKey = hero?.key
-        if (heroKey == null || state.rows.none { row -> row.items.any { it.key == heroKey } }) {
-            hero = firstItem
-        }
+    val focus = rememberShelfFocus()
+    // Held as a key rather than an item so the featured title survives a trip into a detail
+    // screen, and so live playback rewriting an item in place does not reset the banner.
+    var heroKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val hero = remember(state.rows, heroKey) {
+        heroKey
+            ?.let { key ->
+                state.rows.firstNotNullOfOrNull { row -> row.items.firstOrNull { it.key == key } }
+            }
+            ?: state.rows.firstOrNull()?.items?.firstOrNull()
     }
 
     when {
@@ -111,7 +116,7 @@ fun HomeScreen(
                 }
             }
             items(state.rows, key = MediaRow::title) { row ->
-                MediaShelf(row, controller, onFocused = { hero = it })
+                MediaShelf(row, controller, focus, onFocused = { heroKey = it.key })
             }
         }
     }
@@ -126,6 +131,7 @@ fun ProvidersScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val selected = state.selectedProvider
+    val focus = rememberShelfFocus()
     val catalogActionsRequester = remember { FocusRequester() }
     val displayedRows = remember(state.rows, state.filter) {
         filterCatalogRows(state.rows, state.filter)
@@ -238,7 +244,7 @@ fun ProvidersScreen(
                             )
                         }
                         item(key = "titles:${row.title}") {
-                            MediaShelfRow(row, controller, onFocused = {})
+                            MediaShelfRow(row, controller, focus, onFocused = {})
                         }
                     }
                 }
@@ -463,16 +469,72 @@ private fun Hero(item: MediaItem, onOpen: () -> Unit) {
     }
 }
 
+/**
+ * Remembers which poster opened a detail screen so Back can put the D-pad cursor back on it.
+ *
+ * The target survives the detail screen because it is saveable and the tab lives under a
+ * [androidx.compose.runtime.saveable.SaveableStateHolder]; the pending flag is deliberately not
+ * saved, so it re-arms exactly once each time the screen comes back and never steals focus from
+ * a shelf that merely scrolled into view.
+ */
+@Stable
+class ShelfFocus internal constructor(
+    private val target: MutableState<String?>,
+    private val pending: MutableState<String?>,
+) {
+    fun record(group: String, item: MediaItem) {
+        target.value = "$group$SEPARATOR${item.key}"
+    }
+
+    /** The item key this group should focus, or null when the restore is not for this group. */
+    fun pendingKeyIn(group: String): String? =
+        pending.value
+            ?.takeIf { it.startsWith(group + SEPARATOR) }
+            ?.substringAfter(SEPARATOR)
+
+    fun consume() {
+        pending.value = null
+    }
+
+    private companion object {
+        /** Cannot occur in a row title, so the group and the item key stay unambiguous. */
+        const val SEPARATOR = '\u0000'
+    }
+}
+
+@Composable
+fun rememberShelfFocus(): ShelfFocus {
+    val target = rememberSaveable { mutableStateOf<String?>(null) }
+    val pending = remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        // One frame of slack lets the restored scroll offsets settle before the poster we want
+        // is asked for focus; requesting against an unplaced node would simply be dropped.
+        target.value?.let {
+            withFrameNanos { }
+            pending.value = it
+            // If the shelf never came back - the row is gone, or a refresh reordered it
+            // - drop the request instead of leaving it armed for some later scroll.
+            delay(FOCUS_RESTORE_WINDOW_MS)
+            pending.value = null
+        }
+    }
+    return remember(target, pending) { ShelfFocus(target, pending) }
+}
+
+/** How long a pending focus restore stays valid after the screen returns. */
+private const val FOCUS_RESTORE_WINDOW_MS = 1_000L
+
 @Composable
 private fun MediaShelf(
     row: MediaRow,
     controller: MarqueeController,
+    focus: ShelfFocus,
     onFocused: (MediaItem) -> Unit,
 ) {
     Column {
         SectionHeading(row.title, row.subtitle ?: "${row.items.size} titles")
         Spacer(Modifier.height(6.dp))
-        MediaShelfRow(row, controller, onFocused)
+        MediaShelfRow(row, controller, focus, onFocused)
     }
 }
 
@@ -480,9 +542,18 @@ private fun MediaShelf(
 private fun MediaShelfRow(
     row: MediaRow,
     controller: MarqueeController,
+    focus: ShelfFocus,
     onFocused: (MediaItem) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val requester = remember { FocusRequester() }
+    val restoreKey = focus.pendingKeyIn(row.title)
+    LaunchedEffect(restoreKey) {
+        if (restoreKey != null) {
+            runCatching { requester.requestFocus() }
+            focus.consume()
+        }
+    }
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
@@ -490,7 +561,13 @@ private fun MediaShelfRow(
         items(row.items, key = { it.key }) { item ->
             MediaPoster(
                 item = item,
+                modifier = if (item.key == restoreKey) {
+                    Modifier.focusRequester(requester)
+                } else {
+                    Modifier
+                },
                 onClick = {
+                    focus.record(row.title, item)
                     when (row.action) {
                         MediaRowAction.DETAILS -> controller.openDetails(item)
                         MediaRowAction.CONTINUE_LOCAL ->
@@ -505,6 +582,7 @@ private fun MediaShelfRow(
 
 @Composable
 fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
+    val focus = rememberShelfFocus()
     Column(Modifier.fillMaxSize()) {
         SectionHeading("Search", "Movies and television")
         Spacer(Modifier.height(13.dp))
@@ -521,7 +599,7 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
                 state.error != null -> EmptyState("Search failed", state.error)
                 state.query.isBlank() -> EmptyState("Find your next watch", "Use the Shield keyboard or your remote app to search.")
                 state.results.isEmpty() -> EmptyState("No matches", "Try a different title.")
-                else -> MediaGrid(state.results, controller)
+                else -> MediaGrid(state.results, controller, focus)
             }
         }
     }
@@ -529,6 +607,7 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
 
 @Composable
 fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
+    val focus = rememberShelfFocus()
     Column(Modifier.fillMaxSize()) {
         SectionHeading("People", "Search actors and directors")
         Spacer(Modifier.height(8.dp))
@@ -573,7 +652,7 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
                     state.error != null -> EmptyState("Filmography unavailable", state.error)
                     state.credits.isEmpty() ->
                         EmptyState("No credits found", "Try another person.")
-                    else -> MediaGrid(state.credits, controller)
+                    else -> MediaGrid(state.credits, controller, focus)
                 }
             }
         } else {
@@ -599,7 +678,19 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
 }
 
 @Composable
-private fun MediaGrid(items: List<MediaItem>, controller: MarqueeController) {
+private fun MediaGrid(
+    items: List<MediaItem>,
+    controller: MarqueeController,
+    focus: ShelfFocus,
+) {
+    val requester = remember { FocusRequester() }
+    val restoreKey = focus.pendingKeyIn(GRID_FOCUS_GROUP)
+    LaunchedEffect(restoreKey) {
+        if (restoreKey != null) {
+            runCatching { requester.requestFocus() }
+            focus.consume()
+        }
+    }
     val layout = LocalMarqueeLayout.current
     LazyVerticalGrid(
         columns = GridCells.Adaptive(layout.gridMinimumWidth),
@@ -609,10 +700,24 @@ private fun MediaGrid(items: List<MediaItem>, controller: MarqueeController) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(items, key = { it.key }) { item ->
-            MediaPoster(item, onClick = { controller.openDetails(item) })
+            MediaPoster(
+                item = item,
+                modifier = if (item.key == restoreKey) {
+                    Modifier.focusRequester(requester)
+                } else {
+                    Modifier
+                },
+                onClick = {
+                    focus.record(GRID_FOCUS_GROUP, item)
+                    controller.openDetails(item)
+                },
+            )
         }
     }
 }
+
+/** Grids hold a single group of posters, so one label covers the whole surface. */
+private const val GRID_FOCUS_GROUP = "grid"
 
 @Composable
 private fun PeopleGrid(people: List<Person>, controller: MarqueeController) {
