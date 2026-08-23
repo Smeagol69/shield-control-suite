@@ -3,6 +3,7 @@ package dev.roesler.marquee.data
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.time.Instant
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -20,6 +21,13 @@ sealed interface TraktPollResult {
     data class Authorized(val tokens: TraktTokens) : TraktPollResult
     data class Failed(val message: String) : TraktPollResult
 }
+
+/** One title in the account's watched library, with how often and how recently it was played. */
+data class TraktWatchedEntry(
+    val item: MediaItem,
+    val plays: Int,
+    val lastWatchedAtEpochMillis: Long,
+)
 
 data class TraktProfile(
     val username: String,
@@ -104,6 +112,42 @@ class TraktClient(
         return authorizedRequest(
             "/sync/history?limit=$RESULT_LIMIT&extended=full%2Cimages",
         ).arrayBody().toMediaItems(MediaType.MOVIE)
+    }
+
+    /**
+     * Every distinct title the account has watched, with its play count and last-watched time.
+     *
+     * This is the right shape for training. `/sync/history` returns play *events* — six hundred
+     * of them collapse to a couple of dozen titles once repeated episodes are folded together —
+     * whereas `/sync/watched` returns the library itself, several times more titles, each with
+     * the play count that distinguishes "watched once" from "watched four times". Real
+     * timestamps come with it, so recency decay finally applies to imported history instead of
+     * every old play arriving stamped as if it happened today.
+     */
+    fun watchedLibrary(): List<TraktWatchedEntry> {
+        val entries = LinkedHashMap<String, TraktWatchedEntry>()
+        listOf("movies" to MediaType.MOVIE, "shows" to MediaType.TV).forEach { (path, type) ->
+            val array = runCatching {
+                authorizedRequest("/sync/watched/$path?extended=full").arrayBody()
+            }.getOrNull() ?: return@forEach
+            for (index in 0 until array.length()) {
+                val wrapper = array.optJSONObject(index) ?: continue
+                val parsed = wrapper.toMediaItem(type) ?: continue
+                val media = wrapper.optJSONObject(if (type == MediaType.MOVIE) "movie" else "show")
+                val item = parsed.copy(genreIds = media.traktGenreIds(type))
+                entries.putIfAbsent(
+                    item.key,
+                    TraktWatchedEntry(
+                        item = item,
+                        plays = wrapper.optInt("plays", 1).coerceAtLeast(1),
+                        lastWatchedAtEpochMillis = parseIsoMillis(
+                            wrapper.optNullableString("last_watched_at"),
+                        ),
+                    ),
+                )
+            }
+        }
+        return entries.values.toList()
     }
 
     /**
@@ -392,6 +436,34 @@ class TraktClient(
         )
     }
 
+    /**
+     * Translates Trakt's genre slugs into TMDB genre ids.
+     *
+     * Both sides are needed on the same scale: the model keys features by TMDB genre id because
+     * that is what catalog rows carry, so an imported title tagged `science-fiction` has to
+     * arrive as the same feature a discovered one would. Television uses TMDB's own combined
+     * buckets — `Sci-Fi & Fantasy`, `Action & Adventure` — rather than the film ids, or shows
+     * and films would train two disconnected halves of the profile.
+     */
+    private fun JSONObject?.traktGenreIds(type: MediaType): List<Int> {
+        val array = this?.optJSONArray("genres") ?: return emptyList()
+        val ids = LinkedHashSet<Int>()
+        for (index in 0 until array.length()) {
+            val slug = array.optString(index).lowercase().takeIf(String::isNotBlank) ?: continue
+            val mapped = if (type == MediaType.MOVIE) {
+                MOVIE_GENRE_IDS[slug]
+            } else {
+                TV_GENRE_IDS[slug]
+            }
+            if (mapped != null) ids += mapped
+        }
+        return ids.toList()
+    }
+
+    private fun parseIsoMillis(value: String?): Long =
+        value?.let { raw -> runCatching { Instant.parse(raw).toEpochMilli() }.getOrNull() }
+            ?: System.currentTimeMillis()
+
     private fun JSONObject?.firstMediaImage(key: String): String? {
         val value = this?.optJSONArray(key)?.optString(0).orEmpty()
         return UrlPolicy.canonicalMediaImage(value)
@@ -438,6 +510,57 @@ class TraktClient(
         private const val PLAYBACK_LIMIT = 18
         private const val HISTORY_PAGE_SIZE = 100
         private const val HISTORY_MAX_PAGES = 10
+
+        /** Genre ids shared by both TMDB taxonomies. */
+        private val SHARED_GENRE_IDS = mapOf(
+            "animation" to 16,
+            "anime" to 16,
+            "comedy" to 35,
+            "crime" to 80,
+            "documentary" to 99,
+            "drama" to 18,
+            "family" to 10751,
+            "mystery" to 9648,
+            "suspense" to 9648,
+            "western" to 37,
+        )
+
+        private val MOVIE_GENRE_IDS = SHARED_GENRE_IDS + mapOf(
+            "action" to 28,
+            "adventure" to 12,
+            "fantasy" to 14,
+            "history" to 36,
+            "holiday" to 10751,
+            "horror" to 27,
+            "music" to 10402,
+            "musical" to 10402,
+            "romance" to 10749,
+            "science-fiction" to 878,
+            "superhero" to 28,
+            "thriller" to 53,
+            "war" to 10752,
+        )
+
+        private val TV_GENRE_IDS = SHARED_GENRE_IDS + mapOf(
+            "action" to 10759,
+            "adventure" to 10759,
+            "superhero" to 10759,
+            "fantasy" to 10765,
+            "science-fiction" to 10765,
+            "horror" to 9648,
+            "thriller" to 9648,
+            "children" to 10762,
+            "news" to 10763,
+            "reality" to 10764,
+            "soap" to 10766,
+            "talk-show" to 10767,
+            "game-show" to 10764,
+            "war" to 10768,
+            "history" to 10768,
+            "romance" to 18,
+            "music" to 10402,
+            "musical" to 10402,
+        )
         private const val REFRESH_SKEW_SECONDS = 5 * 60L
         private val IMDB_ID = Regex("""tt\d{5,12}""")
     }

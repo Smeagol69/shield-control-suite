@@ -1063,14 +1063,25 @@ class MarqueeController(context: Context) {
         if (!_trakt.value.connected || traktStore.hasDeepImported()) return
         scope.launch {
             serviceResult {
-                withContext(Dispatchers.IO) { traktClient.fullHistory() }
-            }.onSuccess { history ->
+                withContext(Dispatchers.IO) { traktClient.watchedLibrary() }
+            }.onSuccess { library ->
+                if (library.isEmpty()) return@onSuccess
                 traktStore.markDeepImported()
-                if (history.isNotEmpty()) {
-                    importTraktHistory(history)
-                    retrainTasteModel(force = true)
-                    _taste.value = tasteSnapshot()
-                }
+                watchHistoryStore.recordAll(
+                    library.map { entry ->
+                        WatchedTitle(
+                            item = entry.item.forHistory(),
+                            source = WatchSource.TRAKT,
+                            firstWatchedAtEpochMillis = entry.lastWatchedAtEpochMillis,
+                            lastWatchedAtEpochMillis = entry.lastWatchedAtEpochMillis,
+                            playCount = entry.plays,
+                            completed = true,
+                            progressPercent = 100.0,
+                        )
+                    },
+                )
+                retrainTasteModel(force = true)
+                _taste.value = tasteSnapshot()
             }
         }
     }
@@ -1184,7 +1195,12 @@ class MarqueeController(context: Context) {
      * rating visibly reshapes discovery without a restart.
      */
     private fun retrainTasteModel(force: Boolean = false) {
-        if (tasteTrainingJob?.isActive == true) return
+        // A forced refit carries data the in-flight one has not seen — the import that just
+        // landed, or the rating just given — so it replaces that job rather than being dropped.
+        if (tasteTrainingJob?.isActive == true) {
+            if (!force) return
+            tasteTrainingJob?.cancel()
+        }
         tasteTrainingJob = scope.launch {
             val refreshed = serviceResult {
                 withContext(Dispatchers.Default) {
