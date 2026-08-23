@@ -1018,6 +1018,36 @@ class MarqueeController(context: Context) {
         }
     }
 
+    /**
+     * On first connect, pushes the watches and ratings recorded locally before Trakt was
+     * linked up to the account, so history isn't one-directional. Runs once per connection.
+     */
+    private fun maybeBackfillTrakt() {
+        if (!_trakt.value.connected || traktStore.hasBackfilled()) return
+        scope.launch {
+            val result = serviceResult {
+                withContext(Dispatchers.IO) {
+                    watchHistoryStore.recent(Int.MAX_VALUE)
+                        .filter { it.source != WatchSource.TRAKT }
+                        .forEach { runCatching { traktClient.markWatched(it.item) } }
+                    tasteStore.verdicts().forEach { rated ->
+                        runCatching {
+                            traktClient.setRating(
+                                rated.item,
+                                if (rated.verdict == Verdict.LIKED) {
+                                    TRAKT_LIKE_RATING
+                                } else {
+                                    TRAKT_DISLIKE_RATING
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            if (result.isSuccess) traktStore.markBackfilled()
+        }
+    }
+
     private fun advanceRatingPrompt() {
         _ratingPrompt.value = pendingRatingPrompts.removeFirstOrNull()
     }
@@ -1976,6 +2006,7 @@ class MarqueeController(context: Context) {
                     accountName = profile.displayName ?: profile.username,
                     message = "History, watchlist, and recommendations are synced.",
                 )
+                maybeBackfillTrakt()
             }.onFailure {
                 if (it is CancellationException) throw it
                 val stillHasTokens = traktStore.loadTokens() != null
@@ -2027,6 +2058,7 @@ class MarqueeController(context: Context) {
                         accountName = profile?.displayName ?: profile?.username,
                         message = "Trakt connected.",
                     )
+                    maybeBackfillTrakt()
                     refreshHome()
                     return
                 }

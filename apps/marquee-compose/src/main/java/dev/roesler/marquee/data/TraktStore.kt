@@ -39,6 +39,13 @@ class TraktStore(context: Context) {
         preferences.edit { putString(KEY_ACCOUNT_NAME, name.trim().take(120)) }
     }
 
+    /** Whether local history/ratings have been pushed up once since connecting. */
+    fun hasBackfilled(): Boolean = preferences.getBoolean(KEY_BACKFILLED, false)
+
+    fun markBackfilled() {
+        preferences.edit { putBoolean(KEY_BACKFILLED, true) }
+    }
+
     fun clear() {
         preferences.edit { clear() }
     }
@@ -49,5 +56,6 @@ class TraktStore(context: Context) {
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_EXPIRES_AT = "expires_at"
         private const val KEY_ACCOUNT_NAME = "account_name"
+        private const val KEY_BACKFILLED = "history_backfilled"
     }
 }
