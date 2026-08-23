@@ -81,4 +81,7 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    // The android.jar used by unit tests stubs org.json and throws on every call; a real
+    // implementation on the test classpath lets the JSON persistence paths be exercised.
+    testImplementation(libs.json)
 }

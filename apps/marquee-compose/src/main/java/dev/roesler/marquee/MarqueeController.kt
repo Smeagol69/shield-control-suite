@@ -16,7 +16,10 @@ import dev.roesler.marquee.data.MediaType
 import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.ProviderSort
 import dev.roesler.marquee.data.SettingsStore
+import dev.roesler.marquee.data.TasteModel
+import dev.roesler.marquee.data.TasteModelStore
 import dev.roesler.marquee.data.TasteStore
+import dev.roesler.marquee.data.buildTasteSignals
 import dev.roesler.marquee.data.TmdbClient
 import dev.roesler.marquee.data.TraktClient
 import dev.roesler.marquee.data.TraktDeviceCode
@@ -163,6 +166,11 @@ data class TasteUiState(
     val watchedCount: Int,
     val topGenres: List<String>,
     val personalizing: Boolean,
+    /** Distinct titles the learned model has trained on. */
+    val signalCount: Int = 0,
+    /** How far the learned model is trusted, in `[0, 1)`. */
+    val modelConfidence: Double = 0.0,
+    val modelTrained: Boolean = false,
 )
 
 data class DetailUiState(
@@ -189,6 +197,7 @@ class MarqueeController(context: Context) {
     private val watchlistStore = WatchlistStore(appContext)
     private val traktStore = TraktStore(appContext)
     private val tasteStore = TasteStore(appContext)
+    private val tasteModelStore = TasteModelStore(appContext)
     private val watchHistoryStore = WatchHistoryStore(appContext)
     private val tmdbClient = TmdbClient(settingsStore)
     private val traktClient = TraktClient(settingsStore, traktStore)
@@ -223,6 +232,11 @@ class MarqueeController(context: Context) {
     private var providerSourceRows: List<MediaRow> = emptyList()
     private var providerRankedRows: List<MediaRow> = emptyList()
     private var becauseYouLikedRows: List<MediaRow> = emptyList()
+
+    /** The learned taste model, refit in the background whenever the signal set moves. */
+    @Volatile
+    private var tasteModel: TasteModel = TasteModel()
+    private var tasteTrainingJob: Job? = null
 
     /** Identity of the last live-playback frame published into the shelves. */
     private var lastLiveSignature: String? = null
@@ -264,6 +278,8 @@ class MarqueeController(context: Context) {
     init {
         PlaybackMonitorService.requestConnection(appContext)
         scope.launch { monitorLivePlayback() }
+        tasteModel = tasteModelStore.load()
+        retrainTasteModel()
         if (_settings.value.tmdbCredential.isBlank()) {
             _destination.value = Destination.SETTINGS
         } else {
@@ -595,7 +611,7 @@ class MarqueeController(context: Context) {
                     loading = false,
                     details = details,
                     watchOptions = providers,
-                    recommendations = profile.rankByAffinity(recommendations, watched),
+                    recommendations = rankPool(recommendations, watched),
                 )
                 if (tasteStore.verdictOf(details.item) == Verdict.LIKED) {
                     loadDetailSimilar(details.item)
@@ -677,6 +693,7 @@ class MarqueeController(context: Context) {
 
     fun clearTasteProfile() {
         tasteStore.clear()
+        forgetLearnedModel()
         _ratingPrompt.value = null
         pendingRatingPrompts.clear()
         _detail.value = _detail.value.copy(verdict = null, becauseYouLiked = emptyList())
@@ -684,14 +701,25 @@ class MarqueeController(context: Context) {
         _taste.value = tasteSnapshot()
         publishHome()
         publishProviderRows()
+        retrainTasteModel(force = true)
     }
 
     fun clearWatchHistory() {
         watchHistoryStore.clear()
+        forgetLearnedModel()
         _detail.value = _detail.value.copy(watched = null)
         _taste.value = tasteSnapshot()
         publishHome()
         publishProviderRows()
+        retrainTasteModel(force = true)
+    }
+
+    /** Drops the learned weights so cleared data cannot keep voting through the model. */
+    private fun forgetLearnedModel() {
+        tasteTrainingJob?.cancel()
+        tasteTrainingJob = null
+        tasteModel = TasteModel()
+        tasteModelStore.clear()
     }
 
     fun toggleTraktWatchlist() {
@@ -985,6 +1013,9 @@ class MarqueeController(context: Context) {
         publishProviderRows()
         refreshBecauseYouLiked()
         syncRatingToTrakt(item, applied)
+        // A fresh opinion is the strongest signal there is; refit immediately rather than
+        // waiting for the daily pass.
+        retrainTasteModel(force = true)
         return applied
     }
 
@@ -992,6 +1023,7 @@ class MarqueeController(context: Context) {
         watchHistoryStore.recordWatched(item.forHistory(), source)
         // Watches that originated on this Shield sync up to Trakt; imports from Trakt don't echo back.
         if (source != WatchSource.TRAKT) syncWatchToTrakt(item)
+        retrainTasteModel()
     }
 
     /** Pushes a watch to the connected Trakt history in the background; failures are non-fatal. */
@@ -1013,6 +1045,31 @@ class MarqueeController(context: Context) {
                         Verdict.DISLIKED -> traktClient.setRating(item, TRAKT_DISLIKE_RATING)
                         null -> traktClient.removeRating(item)
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * Pulls the account's full watch history down in pages, once per connection.
+     *
+     * Kept separate from the upload backfill because the two are independent: an account that
+     * has already had local history pushed to it may still be holding years of plays this
+     * Shield has never seen, and every one of them is a training example. The shelf query tops
+     * out at eighteen titles, which would leave the model learning from a rounding error of the
+     * evidence actually available.
+     */
+    private fun maybeDeepImportTraktHistory() {
+        if (!_trakt.value.connected || traktStore.hasDeepImported()) return
+        scope.launch {
+            serviceResult {
+                withContext(Dispatchers.IO) { traktClient.fullHistory() }
+            }.onSuccess { history ->
+                traktStore.markDeepImported()
+                if (history.isNotEmpty()) {
+                    importTraktHistory(history)
+                    retrainTasteModel(force = true)
+                    _taste.value = tasteSnapshot()
                 }
             }
         }
@@ -1054,14 +1111,27 @@ class MarqueeController(context: Context) {
 
     private fun tasteSnapshot(): TasteUiState {
         val profile = tasteStore.profile()
+        val model = tasteModel
+        // The learned model reads genre preference off its own weights; fall back to the
+        // hand-tuned profile's ordering until it has trained.
+        val topGenres = if (model.trained) {
+            model.topFeatures("g:", TOP_GENRE_LABELS)
+                .mapNotNull { it.toIntOrNull()?.let(genreNames::get) }
+                .ifEmpty { profile.topGenreIds(TOP_GENRE_LABELS).mapNotNull { genreNames[it] } }
+        } else {
+            profile.topGenreIds(TOP_GENRE_LABELS).mapNotNull { genreNames[it] }
+        }
         return TasteUiState(
             ratingCount = profile.ratingCount,
             likedCount = profile.likedKeys.size,
             dislikedCount = profile.ratingCount - profile.likedKeys.size,
             watchedCount = watchHistoryStore.size(),
-            topGenres = profile.topGenreIds(TOP_GENRE_LABELS)
-                .mapNotNull { genreNames[it] },
-            personalizing = _settings.value.personalizedRanking && profile.established,
+            topGenres = topGenres,
+            personalizing = _settings.value.personalizedRanking &&
+                (profile.established || model.trained),
+            signalCount = model.coverage,
+            modelConfidence = model.confidence,
+            modelTrained = model.trained,
         )
     }
 
@@ -1069,15 +1139,71 @@ class MarqueeController(context: Context) {
     private fun personalize(rows: List<MediaRow>): List<MediaRow> {
         if (!_settings.value.personalizedRanking) return rows
         val profile = tasteStore.profile()
-        if (profile.ratingCount == 0) return rows
+        val model = tasteModel
+        if (profile.ratingCount == 0 && !model.trained) return rows
         val watched = watchHistoryStore.watchedKeys()
         return rows.mapNotNull { row ->
             if (!row.personalize) {
                 row
             } else {
-                val ranked = profile.rank(row.items, watched)
+                val candidates = profile.withoutDisliked(row.items)
+                val ranked = if (model.trained) {
+                    model.rank(candidates, watched, profile, preserveSourceOrder = true)
+                } else {
+                    profile.rank(candidates, watched)
+                }
                 row.copy(items = ranked).takeIf { ranked.isNotEmpty() }
             }
+        }
+    }
+
+    /**
+     * Orders a pool whose source order carries no meaning of its own — a merged
+     * `Because you liked …` set, or the recommendations under a title — on appetite alone.
+     */
+    private fun rankPool(items: List<MediaItem>, watched: Set<String>): List<MediaItem> {
+        val profile = tasteStore.profile()
+        val model = tasteModel
+        return if (model.trained) {
+            model.rank(
+                items = profile.withoutDisliked(items),
+                watchedKeys = watched,
+                profile = profile,
+                preserveSourceOrder = false,
+            )
+        } else {
+            profile.rankByAffinity(items, watched)
+        }
+    }
+
+    /**
+     * Refits the learned model from every signal on record.
+     *
+     * Runs off the main thread and only when something actually moved, since a fit replays the
+     * whole history. The result is swapped in atomically and the shelves republished, so a new
+     * rating visibly reshapes discovery without a restart.
+     */
+    private fun retrainTasteModel(force: Boolean = false) {
+        if (tasteTrainingJob?.isActive == true) return
+        tasteTrainingJob = scope.launch {
+            val refreshed = serviceResult {
+                withContext(Dispatchers.Default) {
+                    val signals = buildTasteSignals(
+                        verdicts = tasteStore.verdicts(),
+                        watched = watchHistoryStore.recent(Int.MAX_VALUE),
+                        watchlist = watchlistStore.load(),
+                    )
+                    if (signals.isEmpty()) return@withContext null
+                    if (!force && !tasteModelStore.isStale(signals.size)) return@withContext null
+                    // Always fit from a clean slate: replaying history over stale weights would
+                    // let a retired opinion keep half a vote forever.
+                    TasteModel().trainedOn(signals).also(tasteModelStore::save)
+                }
+            }.getOrNull() ?: return@launch
+            tasteModel = refreshed
+            publishHome()
+            publishProviderRows()
+            _taste.value = tasteSnapshot()
         }
     }
 
@@ -1146,8 +1272,7 @@ class MarqueeController(context: Context) {
         val used = hashSetOf<String>()
         return seeds.mapNotNull { seed ->
             val pool = serviceResult { tmdbClient.similarTo(seed) }.getOrDefault(emptyList())
-            val items = profile
-                .rankByAffinity(pool, watched)
+            val items = rankPool(pool, watched)
                 .filter { it.key != seed.key && used.add(it.key) }
                 .take(BECAUSE_YOU_LIKED_ITEMS)
             items.takeIf(List<MediaItem>::isNotEmpty)?.let {
@@ -1179,10 +1304,8 @@ class MarqueeController(context: Context) {
                 return@launch
             }
             if (currentItem()?.key != seed.key) return@launch
-            val profile = tasteStore.profile()
             _detail.value = _detail.value.copy(
-                becauseYouLiked = profile
-                    .rankByAffinity(pool, watchHistoryStore.watchedKeys())
+                becauseYouLiked = rankPool(pool, watchHistoryStore.watchedKeys())
                     .take(BECAUSE_YOU_LIKED_ITEMS),
             )
         }
@@ -2007,6 +2130,7 @@ class MarqueeController(context: Context) {
                     message = "History, watchlist, and recommendations are synced.",
                 )
                 maybeBackfillTrakt()
+                maybeDeepImportTraktHistory()
             }.onFailure {
                 if (it is CancellationException) throw it
                 val stillHasTokens = traktStore.loadTokens() != null
@@ -2059,6 +2183,7 @@ class MarqueeController(context: Context) {
                         message = "Trakt connected.",
                     )
                     maybeBackfillTrakt()
+                    maybeDeepImportTraktHistory()
                     refreshHome()
                     return
                 }

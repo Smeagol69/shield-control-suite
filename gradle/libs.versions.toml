@@ -9,6 +9,7 @@ coroutines = "1.11.0"
 libxposed = "102.0.0"
 beanshell = "2.0b5"
 junit = "4.13.2"
+json = "20250517"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
@@ -25,6 +26,7 @@ libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "li
 libxposed-service = { group = "io.github.libxposed", name = "service", version.ref = "libxposed" }
 beanshell = { group = "org.beanshell", name = "bsh", version.ref = "beanshell" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

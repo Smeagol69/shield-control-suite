@@ -106,6 +106,27 @@ class TraktClient(
         ).arrayBody().toMediaItems(MediaType.MOVIE)
     }
 
+    /**
+     * Pages deep into the watch history for model training.
+     *
+     * [recentHistory] is deliberately short because it feeds a "recently watched" shelf, but the
+     * taste model wants every play it can get — a viewer with hundreds of logged titles has
+     * hundreds of examples to learn from, and truncating to the newest eighteen throws away
+     * almost all of the signal. Images are skipped here since nothing renders these directly.
+     */
+    fun fullHistory(maxPages: Int = HISTORY_MAX_PAGES): List<MediaItem> {
+        val collected = LinkedHashMap<String, MediaItem>()
+        for (page in 1..maxPages) {
+            val batch = authorizedRequest(
+                "/sync/history?page=$page&limit=$HISTORY_PAGE_SIZE&extended=full",
+            ).arrayBody().toMediaItems(MediaType.MOVIE, limit = HISTORY_PAGE_SIZE)
+            if (batch.isEmpty()) break
+            batch.forEach { collected.putIfAbsent(it.key, it) }
+            if (batch.size < HISTORY_PAGE_SIZE) break
+        }
+        return collected.values.toList()
+    }
+
     fun playbackProgress(): List<MediaItem> =
         authorizedRequest(
             "/sync/playback?limit=$PLAYBACK_LIMIT&extended=full%2Cimages",
@@ -291,14 +312,17 @@ class TraktClient(
         )
     }
 
-    private fun JSONArray.toMediaItems(defaultType: MediaType): List<MediaItem> =
+    private fun JSONArray.toMediaItems(
+        defaultType: MediaType,
+        limit: Int = RESULT_LIMIT,
+    ): List<MediaItem> =
         buildList {
             for (index in 0 until length()) {
                 val wrapper = optJSONObject(index) ?: continue
                 wrapper.toMediaItem(defaultType)?.let(::add)
             }
         }.distinctBy { it.key }
-            .take(RESULT_LIMIT)
+            .take(limit)
 
     private fun JSONArray.toPlaybackItems(): List<MediaItem> =
         buildList {
@@ -412,6 +436,8 @@ class TraktClient(
         private const val BASE_URL = "https://api.trakt.tv"
         private const val RESULT_LIMIT = 18
         private const val PLAYBACK_LIMIT = 18
+        private const val HISTORY_PAGE_SIZE = 100
+        private const val HISTORY_MAX_PAGES = 10
         private const val REFRESH_SKEW_SECONDS = 5 * 60L
         private val IMDB_ID = Regex("""tt\d{5,12}""")
     }

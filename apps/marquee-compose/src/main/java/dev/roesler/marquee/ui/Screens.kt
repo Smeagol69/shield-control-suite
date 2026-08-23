@@ -890,10 +890,10 @@ fun SettingsScreen(
                         )
                         Spacer(Modifier.width(9.dp))
                         AppText(
-                            if (taste.personalizing) {
-                                "Ranking with your ratings"
-                            } else {
-                                "Rate a few titles to start ranking"
+                            when {
+                                taste.modelTrained -> "Learning from what you watch"
+                                taste.personalizing -> "Ranking with your ratings"
+                                else -> "Rate a few titles to start ranking"
                             },
                             13.sp,
                             MarqueePalette.Text,
@@ -915,6 +915,16 @@ fun SettingsScreen(
                             12.sp,
                             MarqueePalette.Green,
                             FontWeight.SemiBold,
+                        )
+                    }
+                    if (taste.modelTrained) {
+                        Spacer(Modifier.height(6.dp))
+                        AppText(
+                            "Trained on ${taste.signalCount} titles · " +
+                                "${(taste.modelConfidence * 100).toInt()}% dialled in",
+                            11.sp,
+                            MarqueePalette.Muted,
+                            FontWeight.Medium,
                         )
                     }
                     Spacer(Modifier.height(14.dp))

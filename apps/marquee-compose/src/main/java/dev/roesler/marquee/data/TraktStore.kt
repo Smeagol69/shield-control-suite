@@ -46,6 +46,13 @@ class TraktStore(context: Context) {
         preferences.edit { putBoolean(KEY_BACKFILLED, true) }
     }
 
+    /** Whether the account's full history has been paged down once since connecting. */
+    fun hasDeepImported(): Boolean = preferences.getBoolean(KEY_DEEP_IMPORTED, false)
+
+    fun markDeepImported() {
+        preferences.edit { putBoolean(KEY_DEEP_IMPORTED, true) }
+    }
+
     fun clear() {
         preferences.edit { clear() }
     }
@@ -57,5 +64,6 @@ class TraktStore(context: Context) {
         private const val KEY_EXPIRES_AT = "expires_at"
         private const val KEY_ACCOUNT_NAME = "account_name"
         private const val KEY_BACKFILLED = "history_backfilled"
+        private const val KEY_DEEP_IMPORTED = "history_deep_imported"
     }
 }
