@@ -64,6 +64,7 @@ import dev.roesler.marquee.data.CatalogProvider
 import dev.roesler.marquee.data.MarqueeSettings
 import dev.roesler.marquee.data.MediaItem
 import dev.roesler.marquee.data.MediaRow
+import dev.roesler.marquee.data.MediaType
 import dev.roesler.marquee.data.MediaRowAction
 import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.Verdict
@@ -1527,10 +1528,14 @@ private fun buildMetadata(state: DetailUiState): String {
     val item = details?.item ?: state.seed ?: return ""
     return buildList {
         item.year.takeIf(String::isNotBlank)?.let(::add)
+        details?.certification?.takeIf(String::isNotBlank)?.let(::add)
         item.rating.takeIf { it > 0.0 }?.let { add("★ %.1f".format(it)) }
         details?.runtimeMinutes?.let { add("$it min") }
         details?.seasons?.let { add("$it season${if (it == 1) "" else "s"}") }
         details?.genres?.takeIf { it.isNotEmpty() }?.let { add(it.joinToString()) }
+        details?.director?.takeIf(String::isNotBlank)?.let {
+            add(if (item.type == MediaType.TV) "Created by $it" else "Dir. $it")
+        }
     }.joinToString("  ·  ")
 }
 

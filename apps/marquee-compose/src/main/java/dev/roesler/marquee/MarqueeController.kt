@@ -984,11 +984,38 @@ class MarqueeController(context: Context) {
         publishHome()
         publishProviderRows()
         refreshBecauseYouLiked()
+        syncRatingToTrakt(item, applied)
         return applied
     }
 
     private fun markWatched(item: MediaItem, source: WatchSource) {
         watchHistoryStore.recordWatched(item.forHistory(), source)
+        // Watches that originated on this Shield sync up to Trakt; imports from Trakt don't echo back.
+        if (source != WatchSource.TRAKT) syncWatchToTrakt(item)
+    }
+
+    /** Pushes a watch to the connected Trakt history in the background; failures are non-fatal. */
+    private fun syncWatchToTrakt(item: MediaItem) {
+        if (!_trakt.value.connected) return
+        scope.launch {
+            serviceResult { withContext(Dispatchers.IO) { traktClient.markWatched(item) } }
+        }
+    }
+
+    /** Mirrors a like/dislike (or its removal) to the connected Trakt account in the background. */
+    private fun syncRatingToTrakt(item: MediaItem, verdict: Verdict?) {
+        if (!_trakt.value.connected) return
+        scope.launch {
+            serviceResult {
+                withContext(Dispatchers.IO) {
+                    when (verdict) {
+                        Verdict.LIKED -> traktClient.setRating(item, TRAKT_LIKE_RATING)
+                        Verdict.DISLIKED -> traktClient.setRating(item, TRAKT_DISLIKE_RATING)
+                        null -> traktClient.removeRating(item)
+                    }
+                }
+            }
+        }
     }
 
     private fun advanceRatingPrompt() {
@@ -2153,6 +2180,10 @@ class MarqueeController(context: Context) {
         private const val BECAUSE_YOU_LIKED_ITEMS = 20
         private const val WATCHED_ROW_LIMIT = 30
         private const val FREE_ROW_LIMIT = 20
+
+        // Trakt uses a 1–10 scale; Marquee's like/dislike map to a clear positive/negative.
+        private const val TRAKT_LIKE_RATING = 8
+        private const val TRAKT_DISLIKE_RATING = 3
 
         /**
          * Free / ad-supported services (TMDB provider id → Android TV package). The Home

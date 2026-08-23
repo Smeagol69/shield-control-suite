@@ -141,6 +141,31 @@ class TraktClient(
         if (response.status !in 200..299) throw TraktException.Http(response.status)
     }
 
+    fun setRating(item: MediaItem, rating: Int) {
+        val response = authorizedRequest(
+            "/sync/ratings",
+            method = "POST",
+            body = ratingBody(item, rating),
+        )
+        if (response.status !in 200..299) throw TraktException.Http(response.status)
+    }
+
+    fun removeRating(item: MediaItem) {
+        val response = authorizedRequest(
+            "/sync/ratings/remove",
+            method = "POST",
+            body = ratingBody(item, null),
+        )
+        if (response.status !in 200..299) throw TraktException.Http(response.status)
+    }
+
+    private fun ratingBody(item: MediaItem, rating: Int?): JSONObject {
+        val collection = if (item.type == MediaType.MOVIE) "movies" else "shows"
+        val entry = JSONObject().put("ids", JSONObject().put("tmdb", item.id))
+        if (rating != null) entry.put("rating", rating)
+        return JSONObject().put(collection, JSONArray().put(entry))
+    }
+
     fun revokeAndClear() {
         val tokens = traktStore.loadTokens()
         val credentials = runCatching { credentials() }.getOrNull()

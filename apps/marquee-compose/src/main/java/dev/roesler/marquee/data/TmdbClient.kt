@@ -206,7 +206,10 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun details(item: MediaItem): MediaDetails {
         val json = request(
             "/${item.type.apiName}/${item.id}",
-            mapOf("append_to_response" to "external_ids,credits,videos"),
+            mapOf(
+                "append_to_response" to
+                    "external_ids,credits,videos,release_dates,content_ratings",
+            ),
         )
         val normalized = mediaItem(json, item.type) ?: item
         val genres = json.optJSONArray("genres")
@@ -239,6 +242,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             .firstOrNull()
             ?.optString("key")
             ?.let { key -> "https://www.youtube.com/watch?v=$key" }
+        val region = settingsStore.load().region
         return MediaDetails(
             item = normalized.copy(
                 posterUrl = normalized.posterUrl ?: item.posterUrl,
@@ -250,8 +254,46 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             seasons = json.optInt("number_of_seasons").takeIf { it > 0 },
             cast = cast,
             trailerUrl = trailerUrl,
+            certification = certificationOf(json, item.type, region),
+            director = directorOf(json, item.type),
         )
     }
+
+    /** Age certification for the region (falling back to US), from TMDB's rating tables. */
+    private fun certificationOf(json: JSONObject, type: MediaType, region: String): String? {
+        val results = if (type == MediaType.MOVIE) {
+            json.optJSONObject("release_dates")?.optJSONArray("results")
+        } else {
+            json.optJSONObject("content_ratings")?.optJSONArray("results")
+        }
+        fun forRegion(code: String): String? = results.toObjectSequence()
+            .firstOrNull { it.optString("iso_3166_1").equals(code, ignoreCase = true) }
+            ?.let { entry ->
+                if (type == MediaType.MOVIE) {
+                    entry.optJSONArray("release_dates").toObjectSequence()
+                        .map { it.optString("certification") }
+                        .firstOrNull(String::isNotBlank)
+                } else {
+                    entry.optString("rating").takeIf(String::isNotBlank)
+                }
+            }
+        return forRegion(region) ?: forRegion("US")
+    }
+
+    /** Director for a movie, or the creator(s) for a series. */
+    private fun directorOf(json: JSONObject, type: MediaType): String? =
+        if (type == MediaType.MOVIE) {
+            json.optJSONObject("credits")?.optJSONArray("crew").toObjectSequence()
+                .firstOrNull { it.optString("job").equals("Director", ignoreCase = true) }
+                ?.optString("name")?.takeIf(String::isNotBlank)
+        } else {
+            json.optJSONArray("created_by").toObjectSequence()
+                .map { it.optString("name") }
+                .filter(String::isNotBlank)
+                .toList()
+                .takeIf(List<String>::isNotEmpty)
+                ?.joinToString(", ")
+        }
 
     fun recommendations(item: MediaItem): List<MediaItem> =
         mediaList(request("/${item.type.apiName}/${item.id}/recommendations"))

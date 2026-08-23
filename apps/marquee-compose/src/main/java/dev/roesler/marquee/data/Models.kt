@@ -58,6 +58,10 @@ data class MediaDetails(
     val seasons: Int?,
     val cast: List<Person> = emptyList(),
     val trailerUrl: String? = null,
+    /** Age certification for the viewer's region (e.g. "R", "TV-MA"), when TMDB has it. */
+    val certification: String? = null,
+    /** Director (movies) or creator(s) (series). */
+    val director: String? = null,
 )
 
 data class WatchProvider(
