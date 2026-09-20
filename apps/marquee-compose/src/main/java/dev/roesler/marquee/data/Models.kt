@@ -64,6 +64,14 @@ data class MediaDetails(
     val director: String? = null,
     /** The franchise this title belongs to, when TMDB groups it into one. */
     val collection: MediaCollection? = null,
+    /** The marketing one-liner, when there is one worth showing. */
+    val tagline: String? = null,
+    /** Production status: "Released", "Returning Series", "Ended", "Canceled". */
+    val status: String? = null,
+    /** Total episodes across all seasons, for series. */
+    val episodeCount: Int? = null,
+    /** Originating network or streamer, for series. */
+    val network: String? = null,
 )
 
 /** A TMDB collection: a franchise grouping several films under one banner. */

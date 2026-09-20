@@ -256,6 +256,13 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             trailerUrl = trailerUrl,
             certification = certificationOf(json, item.type, region),
             director = directorOf(json, item.type),
+            tagline = json.optNullableString("tagline"),
+            status = json.optNullableString("status"),
+            episodeCount = json.optInt("number_of_episodes").takeIf { it > 0 },
+            network = json.optJSONArray("networks")
+                .toObjectSequence()
+                .map { it.optString("name") }
+                .firstOrNull(String::isNotBlank),
             collection = json.optJSONObject("belongs_to_collection")?.let { group ->
                 val id = group.optInt("id")
                 val name = group.optString("name").trim()

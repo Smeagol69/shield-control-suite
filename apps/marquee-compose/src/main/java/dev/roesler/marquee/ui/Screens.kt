@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -111,7 +112,9 @@ fun HomeScreen(
                     AppText(notice, 11.sp, MarqueePalette.Muted, FontWeight.Medium)
                 }
             }
-            items(state.rows, key = MediaRow::title) { row ->
+            // Keyed by title *and* position: two "Because you liked …" seeds can share a title
+            // (a remake and its original), and a duplicate key throws inside LazyColumn.
+            itemsIndexed(state.rows, key = { index, row -> "${row.title}#$index" }) { _, row ->
                 MediaShelf(row, controller, onFocused = { hero = it })
             }
         }
@@ -1195,6 +1198,19 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                             MarqueePalette.Gold,
                             FontWeight.Bold,
                         )
+                        state.details?.tagline
+                            ?.takeIf(String::isNotBlank)
+                            ?.let { tagline ->
+                                Spacer(Modifier.height(6.dp))
+                                AppText(
+                                    tagline,
+                                    12.sp,
+                                    MarqueePalette.Muted,
+                                    FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         Spacer(Modifier.height(12.dp))
                         AppText(
                             media.overview.ifBlank { "No synopsis is available." },
@@ -1560,7 +1576,20 @@ private fun buildMetadata(state: DetailUiState): String {
         details?.certification?.takeIf(String::isNotBlank)?.let(::add)
         item.rating.takeIf { it > 0.0 }?.let { add("★ %.1f".format(it)) }
         details?.runtimeMinutes?.let { add("$it min") }
-        details?.seasons?.let { add("$it season${if (it == 1) "" else "s"}") }
+        details?.seasons?.let { seasons ->
+            val episodes = details.episodeCount
+            add(
+                buildString {
+                    append("$seasons season${if (seasons == 1) "" else "s"}")
+                    if (episodes != null) append(" · $episodes episodes")
+                },
+            )
+        }
+        // "Released" on a film is noise; a series' status genuinely tells you whether to start it.
+        details?.status
+            ?.takeIf { it.isNotBlank() && !it.equals("Released", ignoreCase = true) }
+            ?.let(::add)
+        details?.network?.takeIf(String::isNotBlank)?.let(::add)
         details?.genres?.takeIf { it.isNotEmpty() }?.let { add(it.joinToString()) }
         details?.director?.takeIf(String::isNotBlank)?.let {
             add(if (item.type == MediaType.TV) "Created by $it" else "Dir. $it")
