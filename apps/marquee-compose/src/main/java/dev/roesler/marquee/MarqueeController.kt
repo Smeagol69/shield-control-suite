@@ -351,6 +351,7 @@ class MarqueeController(context: Context) {
                     addAll(result.traktRows)
                     result.tvMazeRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
                     result.madeForYouRow?.let(::add)
+                    addAll(result.peopleRows)
                     addAll(result.becauseYouLikedRows)
                     result.watchedRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
                     addAll(result.tmdbRows)
@@ -1918,6 +1919,7 @@ class MarqueeController(context: Context) {
         }
         val freeRowTask = async { serviceResult { buildFreeRow() } }
         val madeForYouTask = async { serviceResult { buildMadeForYouRow() } }
+        val peopleRowsTask = async { serviceResult { buildPeopleYouLikeRows() } }
 
         val traktRecommendationMovies = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.recommendations(MediaType.MOVIE) } }
@@ -1972,6 +1974,7 @@ class MarqueeController(context: Context) {
             warnings += "Made-for-you row unavailable"
             null
         }
+        val peopleRows = peopleRowsTask.await().getOrDefault(emptyList())
         val tvMazeRow = tvMazeTask.await().fold(
             onSuccess = { it.takeIf { row -> row.items.isNotEmpty() } },
             onFailure = {
@@ -2074,6 +2077,7 @@ class MarqueeController(context: Context) {
             localPlayback = localPlayback,
             freeRow = freeRow,
             madeForYouRow = madeForYouRow,
+            peopleRows = peopleRows,
             tmdbRows = tmdbRows,
             genreRows = genreRows,
             traktRows = traktRows,
@@ -2157,6 +2161,62 @@ class MarqueeController(context: Context) {
             subtitle = "${watchHistoryStore.size()} titles tracked on this Shield",
             personalize = false,
         )
+    }
+
+    /**
+     * Shelves built around the faces a viewer keeps choosing.
+     *
+     * People are among the strongest signals in film taste and the model cannot see them: cast
+     * never reaches the feature space, because catalog rows carry no credits and fetching them
+     * per candidate would be hundreds of requests. So person affinity is used for *retrieval*
+     * rather than scoring — find who recurs across liked titles, then pull their filmography and
+     * let the model rank it.
+     *
+     * The bar is appearing in at least two liked titles. One appearance is not a preference, it
+     * is a coincidence, and a shelf built on a coincidence reads as the app guessing wildly.
+     */
+    private suspend fun buildPeopleYouLikeRows(): List<MediaRow> = coroutineScope {
+        val seeds = tasteStore.recentlyLiked(PERSON_AFFINITY_SEEDS)
+        if (seeds.size < PERSON_AFFINITY_MIN_APPEARANCES) return@coroutineScope emptyList()
+        val casts = seeds
+            .chunked(RESOLVE_CONCURRENCY)
+            .flatMap { chunk ->
+                chunk.map { seed ->
+                    async(Dispatchers.IO) {
+                        serviceResult { tmdbClient.castOf(seed) }.getOrDefault(emptyList())
+                    }
+                }.awaitAll()
+            }
+
+        val appearances = LinkedHashMap<Int, MutableList<Person>>()
+        casts.forEach { cast ->
+            // One credit per title per person, so a single film cannot vote twice.
+            cast.distinctBy(Person::id).forEach { person ->
+                appearances.getOrPut(person.id) { mutableListOf() } += person
+            }
+        }
+
+        val seedKeys = seeds.mapTo(hashSetOf()) { it.key }
+        val watched = watchHistoryStore.watchedKeys()
+        val recurring = appearances.values
+            .filter { it.size >= PERSON_AFFINITY_MIN_APPEARANCES }
+            .sortedByDescending { it.size }
+            .take(PERSON_AFFINITY_ROWS)
+
+        recurring.mapNotNull { credits ->
+            val person = credits.first()
+            val filmography = serviceResult {
+                withContext(Dispatchers.IO) { tmdbClient.personCredits(person.id) }
+            }.getOrDefault(emptyList())
+                .filterNot { it.key in seedKeys || it.key in watched }
+            if (filmography.size < PERSON_AFFINITY_MIN_ITEMS) return@mapNotNull null
+            MediaRow(
+                title = "More with ${person.name}",
+                items = rankPool(filmography, watched).take(PERSON_AFFINITY_ITEMS),
+                subtitle = "Appears in ${credits.size} titles you liked",
+                personalize = false,
+            )
+        }
     }
 
     /**
@@ -2419,6 +2479,7 @@ class MarqueeController(context: Context) {
         val localPlayback: List<MediaItem>,
         val freeRow: MediaRow?,
         val madeForYouRow: MediaRow?,
+        val peopleRows: List<MediaRow>,
         val tmdbRows: List<MediaRow>,
         val genreRows: List<MediaRow>,
         val traktRows: List<MediaRow>,
@@ -2489,6 +2550,12 @@ class MarqueeController(context: Context) {
         private const val BECAUSE_YOU_LIKED_ITEMS = 20
         private const val WATCHED_ROW_LIMIT = 30
         private const val FREE_ROW_LIMIT = 20
+        private const val PERSON_AFFINITY_SEEDS = 8
+        /** One appearance is a coincidence, not a preference. */
+        private const val PERSON_AFFINITY_MIN_APPEARANCES = 2
+        private const val PERSON_AFFINITY_ROWS = 2
+        private const val PERSON_AFFINITY_ITEMS = 20
+        private const val PERSON_AFFINITY_MIN_ITEMS = 4
         private const val MADE_FOR_YOU_ITEMS = 24
         /** Below this the query was too narrow to be worth a shelf of its own. */
         private const val MADE_FOR_YOU_MINIMUM = 6

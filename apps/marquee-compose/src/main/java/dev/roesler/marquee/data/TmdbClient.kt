@@ -228,6 +228,35 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     fun popularPeople(): List<Person> =
         people(request("/person/popular").optJSONArray("results") ?: JSONArray())
 
+    /**
+     * The top-billed cast of a title, for working out which faces a viewer keeps choosing.
+     *
+     * Deliberately the small `/credits` resource rather than the full detail response: this is
+     * called across several liked titles at once purely to count names, and none of the rest of
+     * that payload is wanted. Billing order is TMDB's own, so "top billed" means the leads.
+     */
+    fun castOf(item: MediaItem, limit: Int = AFFINITY_CAST_LIMIT): List<Person> {
+        val credits = request("/${item.type.apiName}/${item.id}/credits")
+        return credits.optJSONArray("cast")
+            .toObjectSequence()
+            .take(limit)
+            .mapNotNull { member ->
+                val id = member.optInt("id")
+                val name = member.optString("name").trim()
+                if (id <= 0 || name.isBlank()) {
+                    null
+                } else {
+                    Person(
+                        id = id,
+                        name = name,
+                        photoUrl = image(member.optNullableString("profile_path"), "w342"),
+                        knownFor = member.optString("character"),
+                    )
+                }
+            }
+            .toList()
+    }
+
     fun personCredits(personId: Int): List<MediaItem> {
         val cast = request("/person/$personId/combined_credits").optJSONArray("cast") ?: JSONArray()
         val seen = hashSetOf<String>()
@@ -726,6 +755,8 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val RESULT_LIMIT = 30
         private const val DETAIL_CAST_LIMIT = 18
+        /** Only the leads carry a taste signal; a tenth-billed role is noise. */
+        private const val AFFINITY_CAST_LIMIT = 5
         /** Keeps a narrow taste query from filling with barely-rated long-tail entries. */
         private const val TASTE_VOTE_FLOOR = 60
         private const val TASTE_RATED_VOTE_FLOOR = 300
