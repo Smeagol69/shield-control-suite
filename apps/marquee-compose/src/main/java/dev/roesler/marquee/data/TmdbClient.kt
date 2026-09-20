@@ -154,6 +154,42 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         )
     }
 
+    /**
+     * Finds titles matching a learned profile, rather than re-ranking a generic shelf.
+     *
+     * Genres are OR-ed so the query stays broad enough to return a full page, while the genres
+     * the model has learned to dislike are excluded at the source — cheaper than fetching and
+     * discarding them, and it leaves the page for things worth seeing. A vote floor keeps the
+     * long tail of near-unrated entries out; without it a narrow genre query fills with titles
+     * carrying three votes.
+     */
+    fun tasteTitles(query: TasteModel.TasteQuery, type: MediaType): List<MediaItem> {
+        if (!query.isUsable) return emptyList()
+        val parameters = linkedMapOf(
+            "with_genres" to query.genreIds.joinToString("|"),
+            "sort_by" to if (query.preferHighlyRated) "vote_average.desc" else "popularity.desc",
+            "include_adult" to "false",
+            "vote_count.gte" to if (query.preferHighlyRated) {
+                TASTE_RATED_VOTE_FLOOR.toString()
+            } else {
+                TASTE_VOTE_FLOOR.toString()
+            },
+        )
+        if (query.excludedGenreIds.isNotEmpty()) {
+            parameters["without_genres"] = query.excludedGenreIds.joinToString(",")
+        }
+        query.decade?.let { decade ->
+            val (from, to) = if (type == MediaType.MOVIE) {
+                "primary_release_date.gte" to "primary_release_date.lte"
+            } else {
+                "first_air_date.gte" to "first_air_date.lte"
+            }
+            parameters[from] = "$decade-01-01"
+            parameters[to] = "${decade + 9}-12-31"
+        }
+        return mediaList(request("/discover/${type.apiName}", parameters), type)
+    }
+
     fun searchTitles(query: String): List<MediaItem> =
         mediaList(request("/search/multi", mapOf("query" to query)))
             .filter { it.title.isNotBlank() }
@@ -690,6 +726,9 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val RESULT_LIMIT = 30
         private const val DETAIL_CAST_LIMIT = 18
+        /** Keeps a narrow taste query from filling with barely-rated long-tail entries. */
+        private const val TASTE_VOTE_FLOOR = 60
+        private const val TASTE_RATED_VOTE_FLOOR = 300
         private const val DISCOVERY_RESULT_TARGET = 60
         private const val DISCOVERY_MAX_PAGES = 4
         private const val WATCH_OPTIONS_CACHE_SIZE = 256

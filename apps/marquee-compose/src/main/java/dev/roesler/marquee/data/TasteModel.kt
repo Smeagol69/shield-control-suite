@@ -184,6 +184,58 @@ data class TasteModel(
     }
 
     /** Features the model has learned to favour, strongest first, for explaining a row. */
+    /**
+     * The learned profile expressed as a catalog query rather than a scoring function.
+     *
+     * Re-ranking can only reorder what an endpoint already returned; if the viewer's taste is
+     * seventies science fiction, "Popular movies" contains almost none of it and no reordering
+     * will conjure any. Turning the weights into a *query* lets discovery go and look for the
+     * thing instead of waiting for it to show up.
+     *
+     * Negative weights are as useful as positive ones here: a genre the model has learned to
+     * dislike is excluded at the source, which is far cheaper than fetching it and filtering it
+     * out afterwards, and leaves more of the page for things worth seeing.
+     */
+    fun tasteQuery(limit: Int = QUERY_GENRE_LIMIT): TasteQuery {
+        val positives = weights.entries
+            .asSequence()
+            .filter { it.key.startsWith("g:") && it.value > QUERY_MIN_WEIGHT }
+            .sortedByDescending { it.value }
+            .mapNotNull { it.key.removePrefix("g:").toIntOrNull() }
+            .take(limit)
+            .toList()
+        val negatives = weights.entries
+            .asSequence()
+            .filter { it.key.startsWith("g:") && it.value < -QUERY_MIN_WEIGHT }
+            .sortedBy { it.value }
+            .mapNotNull { it.key.removePrefix("g:").toIntOrNull() }
+            .take(limit)
+            .toList()
+            .filterNot { it in positives }
+        // Only claim an era preference when the model actually leans on one, or a single decade
+        // bucket would quietly narrow the whole catalog to a ten-year window.
+        //
+        // Magnitude cannot answer that question here: AdaGrad's first update to a feature moves
+        // it by roughly the learning rate whatever the gradient was (the step is LR·g/sqrt(g²)),
+        // so a decade seen exactly once already carries a respectable-looking weight. What
+        // separates a real era preference from a scattered one is *concentration* - whether the
+        // top decade holds most of the positive era mass - which is also scale-free.
+        val positiveDecades = weights.entries
+            .filter { it.key.startsWith("d:") && it.value > QUERY_MIN_WEIGHT }
+        val topDecade = positiveDecades.maxByOrNull { it.value }
+        val eraMass = positiveDecades.sumOf { it.value }
+        val decade = topDecade?.key?.removePrefix("d:")?.toIntOrNull()
+        val leansOnEra = topDecade != null &&
+            eraMass > 0.0 &&
+            topDecade.value / eraMass >= QUERY_ERA_SHARE
+        return TasteQuery(
+            genreIds = positives,
+            excludedGenreIds = negatives,
+            decade = decade.takeIf { leansOnEra },
+            preferHighlyRated = (weights[TasteFeatures.QUALITY] ?: 0.0) > QUERY_MIN_WEIGHT,
+        )
+    }
+
     fun topFeatures(prefix: String, limit: Int): List<String> =
         weights.entries
             .asSequence()
@@ -206,6 +258,17 @@ data class TasteModel(
             .put(FIELD_OBSERVATIONS, observations)
             .put(FIELD_COVERAGE, coverage)
             .put(FIELD_TRAINED_AT, trainedAtEpochMillis)
+    }
+
+    /** A learned profile rendered as catalog-query terms. */
+    data class TasteQuery(
+        val genreIds: List<Int>,
+        val excludedGenreIds: List<Int>,
+        val decade: Int?,
+        val preferHighlyRated: Boolean,
+    ) {
+        val isUsable: Boolean
+            get() = genreIds.isNotEmpty()
     }
 
     private data class ScoredTitle(
@@ -235,6 +298,10 @@ data class TasteModel(
         private const val DIVERSITY_PENALTY = 0.22
         private const val DIVERSITY_WINDOW = 3
         private const val FAMILIARITY_HALF = 1.5
+        private const val QUERY_GENRE_LIMIT = 3
+        private const val QUERY_MIN_WEIGHT = 0.05
+        /** Share of the positive era mass the top decade must hold to count as a preference. */
+        private const val QUERY_ERA_SHARE = 0.5
         private const val SHUFFLE_SEED = 7L
         private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1_000L
 

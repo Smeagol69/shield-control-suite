@@ -350,6 +350,7 @@ class MarqueeController(context: Context) {
                     result.freeRow?.let(::add)
                     addAll(result.traktRows)
                     result.tvMazeRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
+                    result.madeForYouRow?.let(::add)
                     addAll(result.becauseYouLikedRows)
                     result.watchedRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
                     addAll(result.tmdbRows)
@@ -1916,6 +1917,7 @@ class MarqueeController(context: Context) {
             shelf.label to async { serviceResult { buildGenreRow(shelf) } }
         }
         val freeRowTask = async { serviceResult { buildFreeRow() } }
+        val madeForYouTask = async { serviceResult { buildMadeForYouRow() } }
 
         val traktRecommendationMovies = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.recommendations(MediaType.MOVIE) } }
@@ -1964,6 +1966,10 @@ class MarqueeController(context: Context) {
         }
         val freeRow = freeRowTask.await().getOrElse {
             warnings += "Free-on-your-apps row unavailable"
+            null
+        }
+        val madeForYouRow = madeForYouTask.await().getOrElse {
+            warnings += "Made-for-you row unavailable"
             null
         }
         val tvMazeRow = tvMazeTask.await().fold(
@@ -2067,6 +2073,7 @@ class MarqueeController(context: Context) {
             localWatchlist = watchlistStore.load(),
             localPlayback = localPlayback,
             freeRow = freeRow,
+            madeForYouRow = madeForYouRow,
             tmdbRows = tmdbRows,
             genreRows = genreRows,
             traktRows = traktRows,
@@ -2150,6 +2157,46 @@ class MarqueeController(context: Context) {
             subtitle = "${watchHistoryStore.size()} titles tracked on this Shield",
             personalize = false,
         )
+    }
+
+    /**
+     * A shelf the model went and *found*, rather than one it merely reordered.
+     *
+     * Every other personalized row starts from a generic endpoint and re-sorts it, which caps how
+     * personal it can be: if the viewer's taste sits outside what "Popular movies" returns, no
+     * reordering will surface it. This turns the learned weights into a catalog query first, then
+     * ranks what comes back — so the profile decides what is fetched, not just what order it
+     * appears in. Titles already watched drop out entirely; this shelf is for things to watch
+     * next, and a familiar face here is a wasted slot.
+     */
+    private suspend fun buildMadeForYouRow(): MediaRow? = coroutineScope {
+        val model = tasteModel
+        if (!model.trained) return@coroutineScope null
+        val query = model.tasteQuery()
+        if (!query.isUsable) return@coroutineScope null
+        val movieTask = async {
+            serviceResult { tmdbClient.tasteTitles(query, MediaType.MOVIE) }
+                .getOrDefault(emptyList())
+        }
+        val showTask = async {
+            serviceResult { tmdbClient.tasteTitles(query, MediaType.TV) }
+                .getOrDefault(emptyList())
+        }
+        val watched = watchHistoryStore.watchedKeys()
+        val pool = interleaveByType(movieTask.await(), showTask.await())
+            .distinctBy { it.key }
+            .filterNot { it.key in watched }
+        if (pool.size < MADE_FOR_YOU_MINIMUM) return@coroutineScope null
+        val ranked = rankPool(pool, watched).take(MADE_FOR_YOU_ITEMS)
+        ranked.takeIf(List<MediaItem>::isNotEmpty)?.let {
+            MediaRow(
+                title = "Made for you",
+                items = it,
+                subtitle = "Found from what the model has learned about you",
+                // Already ordered by appetite; a second pass would only re-sort its own output.
+                personalize = false,
+            )
+        }
     }
 
     /** One Home category shelf: popular movies and shows in a genre, merged and interleaved. */
@@ -2371,6 +2418,7 @@ class MarqueeController(context: Context) {
         val localWatchlist: List<MediaItem>,
         val localPlayback: List<MediaItem>,
         val freeRow: MediaRow?,
+        val madeForYouRow: MediaRow?,
         val tmdbRows: List<MediaRow>,
         val genreRows: List<MediaRow>,
         val traktRows: List<MediaRow>,
@@ -2441,6 +2489,9 @@ class MarqueeController(context: Context) {
         private const val BECAUSE_YOU_LIKED_ITEMS = 20
         private const val WATCHED_ROW_LIMIT = 30
         private const val FREE_ROW_LIMIT = 20
+        private const val MADE_FOR_YOU_ITEMS = 24
+        /** Below this the query was too narrow to be worth a shelf of its own. */
+        private const val MADE_FOR_YOU_MINIMUM = 6
 
         // Trakt uses a 1–10 scale; Marquee's like/dislike map to a clear positive/negative.
         private const val TRAKT_LIKE_RATING = 8
