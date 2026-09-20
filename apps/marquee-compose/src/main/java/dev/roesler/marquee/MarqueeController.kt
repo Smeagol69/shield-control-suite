@@ -17,6 +17,7 @@ import dev.roesler.marquee.data.MediaType
 import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.ProviderSort
 import dev.roesler.marquee.data.SettingsStore
+import dev.roesler.marquee.data.SuppressionStore
 import dev.roesler.marquee.data.TasteFeatures
 import dev.roesler.marquee.data.TasteModel
 import dev.roesler.marquee.data.TasteModelStore
@@ -189,6 +190,7 @@ data class DetailUiState(
     val collectionTitles: List<MediaItem> = emptyList(),
     /** Why the learned model rates this title, in the viewer's language. */
     val recommendationReasons: List<String> = emptyList(),
+    val notInterested: Boolean = false,
     val inWatchlist: Boolean = false,
     val inTraktWatchlist: Boolean = false,
     val traktConnected: Boolean = false,
@@ -206,6 +208,7 @@ class MarqueeController(context: Context) {
     private val traktStore = TraktStore(appContext)
     private val tasteStore = TasteStore(appContext)
     private val tasteModelStore = TasteModelStore(appContext)
+    private val suppressionStore = SuppressionStore(appContext)
     private val watchHistoryStore = WatchHistoryStore(appContext)
     private val tmdbClient = TmdbClient(settingsStore)
     private val traktClient = TraktClient(settingsStore, traktStore)
@@ -625,6 +628,7 @@ class MarqueeController(context: Context) {
                 )
                 _detail.value = _detail.value.copy(
                     recommendationReasons = reasonsFor(details.item),
+                    notInterested = suppressionStore.contains(details.item),
                 )
                 details.collection?.let { loadCollection(details.item, it) }
                 if (tasteStore.verdictOf(details.item) == Verdict.LIKED) {
@@ -1171,7 +1175,9 @@ class MarqueeController(context: Context) {
             if (!row.personalize) {
                 row
             } else {
+                val hidden = suppressionStore.keys()
                 val candidates = profile.withoutDisliked(row.items)
+                    .filterNot { it.key in hidden }
                 val ranked = if (model.trained) {
                     model.rank(candidates, watched, profile, preserveSourceOrder = true)
                 } else {
@@ -1222,6 +1228,7 @@ class MarqueeController(context: Context) {
                         verdicts = tasteStore.verdicts(),
                         watched = watchHistoryStore.recent(Int.MAX_VALUE),
                         watchlist = watchlistStore.load(),
+                        suppressed = suppressedItems(),
                     )
                     if (signals.isEmpty()) return@withContext null
                     if (!force && !tasteModelStore.isStale(signals.size)) return@withContext null
@@ -2169,6 +2176,40 @@ class MarqueeController(context: Context) {
             subtitle = "${watchHistoryStore.size()} titles tracked on this Shield",
             personalize = false,
         )
+    }
+
+    /**
+     * Suppressed keys resolved back into items, so the model can learn what was waved away.
+     *
+     * The stores already hold a full [MediaItem] for anything rated, watched, or on a list, so a
+     * suppressed title is almost always recoverable locally; anything that is not is simply left
+     * out rather than fetched, since a wave-off is not worth a network round trip.
+     */
+    private fun suppressedItems(): List<MediaItem> {
+        val keys = suppressionStore.keys()
+        if (keys.isEmpty()) return emptyList()
+        val known = HashMap<String, MediaItem>(keys.size)
+        watchHistoryStore.recent(Int.MAX_VALUE).forEach { known.putIfAbsent(it.item.key, it.item) }
+        watchlistStore.load().forEach { known.putIfAbsent(it.key, it) }
+        homeSourceRows.forEach { row -> row.items.forEach { known.putIfAbsent(it.key, it) } }
+        return keys.mapNotNull(known::get)
+    }
+
+    /**
+     * Waves a title away: hide it, and teach the model from the gesture.
+     *
+     * Toggling rather than one-way, because the cheapest judgement is also the easiest to make
+     * by accident on a remote, and a shelf that silently swallows a title with no way back would
+     * be worse than not having the button.
+     */
+    fun toggleNotInterested(): Boolean {
+        val item = currentItem() ?: return false
+        val suppressed = suppressionStore.toggle(item)
+        _detail.value = _detail.value.copy(notInterested = suppressed)
+        retrainTasteModel(force = true)
+        publishHome()
+        publishProviderRows()
+        return suppressed
     }
 
     /**

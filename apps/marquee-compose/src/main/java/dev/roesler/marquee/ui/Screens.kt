@@ -1341,6 +1341,21 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                                         ).show()
                                     },
                                 )
+                                ActionButton(
+                                    label = if (state.notInterested) "Interested again" else "Not interested",
+                                    onClick = {
+                                        val hidden = controller.toggleNotInterested()
+                                        Toast.makeText(
+                                            context,
+                                            if (hidden) {
+                                                "Hidden. The model will steer away from titles like this."
+                                            } else {
+                                                "Back in your recommendations."
+                                            },
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    },
+                                )
                             }
                         }
                         state.watched?.let { watched ->

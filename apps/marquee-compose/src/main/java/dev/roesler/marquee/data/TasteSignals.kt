@@ -22,6 +22,7 @@ enum class SignalKind {
     ABANDONED,
     PARTIAL,
     WATCHLISTED,
+    NOT_INTERESTED,
 }
 
 /**
@@ -41,6 +42,7 @@ fun buildTasteSignals(
     verdicts: Collection<TitleVerdict>,
     watched: Collection<WatchedTitle>,
     watchlist: Collection<MediaItem> = emptyList(),
+    suppressed: Collection<MediaItem> = emptyList(),
     now: Long = System.currentTimeMillis(),
 ): List<TasteSignal> {
     val signals = ArrayList<TasteSignal>(verdicts.size + watched.size + watchlist.size)
@@ -81,6 +83,21 @@ fun buildTasteSignals(
             weight = signal.second,
             observedAtEpochMillis = entry.lastWatchedAtEpochMillis,
             kind = signal.first,
+        )
+    }
+
+    // A wave-off carries real weight. It is a deliberate judgement rather than an inference
+    // drawn from behaviour, so it counts for more than an abandon - though still less than
+    // sitting through something and disliking it, which is the most informed opinion there is.
+    suppressed.forEach { item ->
+        if (item.key in rated) return@forEach
+        rated += item.key
+        signals += TasteSignal(
+            item = item,
+            label = 0.0,
+            weight = NOT_INTERESTED_WEIGHT,
+            observedAtEpochMillis = now,
+            kind = SignalKind.NOT_INTERESTED,
         )
     }
 
@@ -144,6 +161,7 @@ private const val IMPORTED_WEIGHT = 0.35
 private const val ABANDON_WEIGHT = 0.45
 private const val PARTIAL_WEIGHT = 0.20
 private const val WATCHLIST_WEIGHT = 0.25
+private const val NOT_INTERESTED_WEIGHT = 0.6
 private const val REWATCH_THRESHOLD = 2
 private const val ABANDON_PERCENT = 25.0
 private const val BALANCE_EXPONENT = 0.5
