@@ -28,6 +28,28 @@ class TasteStore(
     @Synchronized
     fun verdictOf(item: MediaItem): Verdict? = index()[item.key]?.verdict
 
+    /**
+     * Adds verdicts recorded elsewhere, without disturbing any opinion held here.
+     *
+     * Deliberately not [rate]: that toggles, so replaying an imported "liked" onto a title already
+     * liked would silently clear it. A verdict given on this Shield is also the more trustworthy
+     * one — it came with the rating prompt in front of the viewer — so a local entry always wins
+     * and only genuinely new titles are added. Returns how many were taken.
+     */
+    @Synchronized
+    fun importVerdicts(entries: Collection<TitleVerdict>): Int {
+        if (entries.isEmpty()) return 0
+        val current = index()
+        var added = 0
+        entries.forEach { entry ->
+            if (current.containsKey(entry.item.key)) return@forEach
+            current[entry.item.key] = entry
+            added++
+        }
+        if (added > 0) persist(current)
+        return added
+    }
+
     @Synchronized
     fun profile(): TasteProfile {
         val cached = profile

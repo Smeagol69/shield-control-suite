@@ -25,6 +25,8 @@ import dev.roesler.marquee.data.TraktClient
 import dev.roesler.marquee.data.TraktDeviceCode
 import dev.roesler.marquee.data.TraktPollResult
 import dev.roesler.marquee.data.TraktStore
+import dev.roesler.marquee.data.TitleVerdict
+import dev.roesler.marquee.data.TraktWatchedEntry
 import dev.roesler.marquee.data.TvMazeClient
 import dev.roesler.marquee.data.Verdict
 import dev.roesler.marquee.data.WatchOptions
@@ -1948,7 +1950,7 @@ class MarqueeController(context: Context) {
         val traktRows = mutableListOf<MediaRow>()
         var traktWatchlist = emptyList<MediaItem>()
         if (includeTrakt) {
-            fun collectTrakt(result: Result<List<MediaItem>>, label: String): List<MediaItem> =
+            fun <T> collectTrakt(result: Result<List<T>>, label: String): List<T> =
                 result.getOrElse {
                     warnings += "$label unavailable"
                     emptyList()
@@ -1972,10 +1974,11 @@ class MarqueeController(context: Context) {
                         "Trakt show watchlist",
                     )
                 ).distinctBy { it.key }
-            val recent = collectTrakt(
+            val recentEntries = collectTrakt(
                 checkNotNull(traktHistory).await(),
                 "Trakt history",
             )
+            val recent = recentEntries.map(TraktWatchedEntry::item)
             val playback = collectTrakt(
                 checkNotNull(traktPlayback).await(),
                 "Trakt playback progress",
@@ -1984,7 +1987,7 @@ class MarqueeController(context: Context) {
             }
 
             // Trakt history is the record of everything watched away from this Shield.
-            importTraktHistory(recent)
+            importTraktHistory(recentEntries)
 
             playback.takeIf(List<MediaItem>::isNotEmpty)?.let {
                 traktRows += MediaRow(
@@ -2034,22 +2037,63 @@ class MarqueeController(context: Context) {
         )
     }
 
-    private fun importTraktHistory(items: List<MediaItem>) {
-        if (items.isEmpty()) return
-        val now = System.currentTimeMillis()
+    /**
+     * Folds Trakt plays into local history using Trakt's own timestamps.
+     *
+     * Stamping these with "now" made the import non-idempotent: it runs on every home load, and
+     * mergeWatchedTitle treats observations more than six hours apart as separate viewings, so
+     * play counts crept upward on every refresh until ordinary titles looked like favourites.
+     */
+    private fun importTraktHistory(entries: List<TraktWatchedEntry>) {
+        if (entries.isEmpty()) return
         watchHistoryStore.recordAll(
-            items.map { item ->
+            entries.map { entry ->
                 WatchedTitle(
-                    item = item.forHistory(),
+                    item = entry.item.forHistory(),
                     source = WatchSource.TRAKT,
-                    firstWatchedAtEpochMillis = now,
-                    lastWatchedAtEpochMillis = now,
-                    playCount = 1,
+                    firstWatchedAtEpochMillis = entry.lastWatchedAtEpochMillis,
+                    lastWatchedAtEpochMillis = entry.lastWatchedAtEpochMillis,
+                    playCount = entry.plays,
                     completed = true,
                     progressPercent = 100.0,
                 )
             },
         )
+    }
+
+    /**
+     * Pulls ratings down from Trakt so a verdict given anywhere reaches this Shield's model.
+     *
+     * Runs alongside the history import; local verdicts always win, so this only fills in titles
+     * this device has no opinion on. A refit follows only when something new actually arrived.
+     */
+    private fun importTraktRatings() {
+        if (!_trakt.value.connected) return
+        scope.launch {
+            val added = serviceResult {
+                withContext(Dispatchers.IO) {
+                    val pulled = traktClient.ratings()
+                    if (pulled.isEmpty()) {
+                        0
+                    } else {
+                        tasteStore.importVerdicts(
+                            pulled.map { rating ->
+                                TitleVerdict(
+                                    item = rating.item.forHistory(),
+                                    verdict = rating.verdict,
+                                    ratedAtEpochMillis = rating.ratedAtEpochMillis,
+                                )
+                            },
+                        )
+                    }
+                }
+            }.getOrDefault(0)
+            if (added > 0) {
+                retrainTasteModel(force = true)
+                _taste.value = tasteSnapshot()
+                publishHome()
+            }
+        }
     }
 
     /** Everything Marquee has seen you watch, newest first. */
@@ -2147,6 +2191,7 @@ class MarqueeController(context: Context) {
                 )
                 maybeBackfillTrakt()
                 maybeDeepImportTraktHistory()
+                importTraktRatings()
             }.onFailure {
                 if (it is CancellationException) throw it
                 val stillHasTokens = traktStore.loadTokens() != null
@@ -2200,6 +2245,7 @@ class MarqueeController(context: Context) {
                     )
                     maybeBackfillTrakt()
                     maybeDeepImportTraktHistory()
+                    importTraktRatings()
                     refreshHome()
                     return
                 }

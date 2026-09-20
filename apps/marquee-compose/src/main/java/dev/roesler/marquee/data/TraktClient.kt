@@ -22,6 +22,13 @@ sealed interface TraktPollResult {
     data class Failed(val message: String) : TraktPollResult
 }
 
+/** A rating pulled down from Trakt, translated into Marquee's like/dislike. */
+data class TraktRatingEntry(
+    val item: MediaItem,
+    val verdict: Verdict,
+    val ratedAtEpochMillis: Long,
+)
+
 /** One title in the account's watched library, with how often and how recently it was played. */
 data class TraktWatchedEntry(
     val item: MediaItem,
@@ -108,10 +115,36 @@ class TraktClient(
                 "&extended=full%2Cimages",
         ).arrayBody().toMediaItems(type)
 
-    fun recentHistory(): List<MediaItem> {
-        return authorizedRequest(
+    /**
+     * The most recent plays, each carrying the time Trakt recorded it.
+     *
+     * The timestamp matters more than it looks: history is re-imported on every home load, and
+     * stamping those records with "now" made two loads more than [NEW_VIEWING_GAP_MS] apart look
+     * like two separate viewings, inflating play counts on every refresh. Carrying Trakt's own
+     * `watched_at` makes a re-import idempotent. Genres are mapped across for the same reason the
+     * watched library maps them — an imported title with no genre ids teaches the model nothing.
+     */
+    fun recentHistory(): List<TraktWatchedEntry> {
+        val array = authorizedRequest(
             "/sync/history?limit=$RESULT_LIMIT&extended=full%2Cimages",
-        ).arrayBody().toMediaItems(MediaType.MOVIE)
+        ).arrayBody()
+        val entries = LinkedHashMap<String, TraktWatchedEntry>()
+        for (index in 0 until array.length()) {
+            val wrapper = array.optJSONObject(index) ?: continue
+            val parsed = wrapper.toMediaItem(MediaType.MOVIE) ?: continue
+            val media = wrapper.optJSONObject(
+                if (parsed.type == MediaType.MOVIE) "movie" else "show",
+            )
+            val item = parsed.copy(genreIds = media.traktGenreIds(parsed.type))
+            val watchedAt = parseIsoMillis(wrapper.optNullableString("watched_at"))
+            val existing = entries[item.key]
+            // Several plays of one title collapse to its most recent; play counts are owned by
+            // watchedLibrary(), which reports them authoritatively.
+            if (existing == null || watchedAt > existing.lastWatchedAtEpochMillis) {
+                entries[item.key] = TraktWatchedEntry(item, plays = 1, lastWatchedAtEpochMillis = watchedAt)
+            }
+        }
+        return entries.values.toList()
     }
 
     /**
@@ -204,6 +237,43 @@ class TraktClient(
         )
         val response = authorizedRequest("/sync/history", method = "POST", body = body)
         if (response.status !in 200..299) throw TraktException.Http(response.status)
+    }
+
+    /**
+     * Every rating on the account, translated back into Marquee's like/dislike.
+     *
+     * Ratings were previously push-only, so a verdict given on Trakt's website, on a phone, or on
+     * any second device never reached this Shield — and the learned model never saw it. Trakt's
+     * scale is 1-10; the middle is deliberately dropped rather than guessed at, since a 5 or 6 is
+     * an ambivalent score and forcing it into a thumb would teach the model something the viewer
+     * never said.
+     */
+    fun ratings(): List<TraktRatingEntry> {
+        val entries = LinkedHashMap<String, TraktRatingEntry>()
+        listOf("movies" to MediaType.MOVIE, "shows" to MediaType.TV).forEach { (path, type) ->
+            val array = runCatching {
+                authorizedRequest("/sync/ratings/$path").arrayBody()
+            }.getOrNull() ?: return@forEach
+            for (index in 0 until array.length()) {
+                val wrapper = array.optJSONObject(index) ?: continue
+                val item = wrapper.toMediaItem(type) ?: continue
+                val score = wrapper.optInt("rating", 0)
+                val verdict = when {
+                    score >= LIKED_AT_OR_ABOVE -> Verdict.LIKED
+                    score in 1..DISLIKED_AT_OR_BELOW -> Verdict.DISLIKED
+                    else -> null
+                } ?: continue
+                entries.putIfAbsent(
+                    item.key,
+                    TraktRatingEntry(
+                        item = item,
+                        verdict = verdict,
+                        ratedAtEpochMillis = parseIsoMillis(wrapper.optNullableString("rated_at")),
+                    ),
+                )
+            }
+        }
+        return entries.values.toList()
     }
 
     fun setRating(item: MediaItem, rating: Int) {
@@ -508,6 +578,9 @@ class TraktClient(
         private const val BASE_URL = "https://api.trakt.tv"
         private const val RESULT_LIMIT = 18
         private const val PLAYBACK_LIMIT = 18
+        /** Trakt scores at or above this read as a thumbs-up; at or below the other, a thumbs-down. */
+        private const val LIKED_AT_OR_ABOVE = 7
+        private const val DISLIKED_AT_OR_BELOW = 4
         private const val HISTORY_PAGE_SIZE = 100
         private const val HISTORY_MAX_PAGES = 10
 
