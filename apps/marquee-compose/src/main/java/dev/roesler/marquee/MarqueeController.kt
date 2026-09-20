@@ -17,6 +17,7 @@ import dev.roesler.marquee.data.MediaType
 import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.ProviderSort
 import dev.roesler.marquee.data.SettingsStore
+import dev.roesler.marquee.data.TasteFeatures
 import dev.roesler.marquee.data.TasteModel
 import dev.roesler.marquee.data.TasteModelStore
 import dev.roesler.marquee.data.TasteStore
@@ -186,6 +187,8 @@ data class DetailUiState(
     val becauseYouLiked: List<MediaItem> = emptyList(),
     /** Other films in this title's franchise, release order. */
     val collectionTitles: List<MediaItem> = emptyList(),
+    /** Why the learned model rates this title, in the viewer's language. */
+    val recommendationReasons: List<String> = emptyList(),
     val inWatchlist: Boolean = false,
     val inTraktWatchlist: Boolean = false,
     val traktConnected: Boolean = false,
@@ -619,6 +622,9 @@ class MarqueeController(context: Context) {
                     details = details,
                     watchOptions = providers,
                     recommendations = rankPool(recommendations, watched),
+                )
+                _detail.value = _detail.value.copy(
+                    recommendationReasons = reasonsFor(details.item),
                 )
                 details.collection?.let { loadCollection(details.item, it) }
                 if (tasteStore.verdictOf(details.item) == Verdict.LIKED) {
@@ -2161,6 +2167,37 @@ class MarqueeController(context: Context) {
             subtitle = "${watchHistoryStore.size()} titles tracked on this Shield",
             personalize = false,
         )
+    }
+
+    /**
+     * Turns the model's feature contributions into phrases a person would recognise.
+     *
+     * The feature keys are the model's own vocabulary - `g:28`, `gp:28_35`, `d:2010` - and mean
+     * nothing on screen. Genre pairs are named as pairs deliberately: "Action + Comedy" is the
+     * whole reason the pair feature exists, and flattening it back to two separate genres would
+     * hide the one thing the model learned that a simpler formula could not.
+     */
+    private fun reasonsFor(item: MediaItem): List<String> {
+        val model = tasteModel
+        if (!model.trained) return emptyList()
+        fun genre(id: String): String? = id.toIntOrNull()?.let(genreNames::get)
+        return model.contributionsFor(item).mapNotNull { (key, _) ->
+            when {
+                key.startsWith("gp:") -> {
+                    val parts = key.removePrefix("gp:").split("_")
+                    val first = parts.getOrNull(0)?.let(::genre)
+                    val second = parts.getOrNull(1)?.let(::genre)
+                    if (first != null && second != null) "$first + $second" else null
+                }
+                key.startsWith("g:") -> genre(key.removePrefix("g:"))
+                key.startsWith("d:") -> key.removePrefix("d:").toIntOrNull()?.let { "${it}s" }
+                key == "t:movie" -> "films"
+                key == "t:tv" -> "series"
+                key == TasteFeatures.QUALITY -> "highly rated"
+                key == TasteFeatures.RECENCY -> "recent releases"
+                else -> null
+            }
+        }.distinct()
     }
 
     /**

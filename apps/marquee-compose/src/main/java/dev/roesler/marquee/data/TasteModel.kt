@@ -185,6 +185,28 @@ data class TasteModel(
 
     /** Features the model has learned to favour, strongest first, for explaining a row. */
     /**
+     * Which features pushed a title up, strongest first.
+     *
+     * A recommender that cannot say why it chose something is indistinguishable from one that
+     * chose at random, and the difference matters most exactly when a pick looks odd. Each term
+     * of the dot product is its own contribution, so the explanation is the arithmetic itself
+     * rather than a plausible story told next to it.
+     *
+     * Returns raw feature keys; naming them needs the genre table, which lives a layer up.
+     */
+    fun contributionsFor(item: MediaItem, limit: Int = EXPLAIN_LIMIT): List<Pair<String, Double>> {
+        if (!trained) return emptyList()
+        return TasteFeatures.of(item)
+            .asSequence()
+            .filter { it.key != TasteFeatures.BIAS }
+            .map { (key, value) -> key to value * (weights[key] ?: 0.0) }
+            .filter { it.second > EXPLAIN_MIN_CONTRIBUTION }
+            .sortedByDescending { it.second }
+            .take(limit)
+            .toList()
+    }
+
+    /**
      * The learned profile expressed as a catalog query rather than a scoring function.
      *
      * Re-ranking can only reorder what an endpoint already returned; if the viewer's taste is
@@ -298,6 +320,8 @@ data class TasteModel(
         private const val DIVERSITY_PENALTY = 0.22
         private const val DIVERSITY_WINDOW = 3
         private const val FAMILIARITY_HALF = 1.5
+        private const val EXPLAIN_LIMIT = 3
+        private const val EXPLAIN_MIN_CONTRIBUTION = 0.01
         private const val QUERY_GENRE_LIMIT = 3
         private const val QUERY_MIN_WEIGHT = 0.05
         /** Share of the positive era mass the top decade must hold to count as a preference. */

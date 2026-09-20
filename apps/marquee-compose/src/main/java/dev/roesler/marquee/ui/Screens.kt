@@ -1212,6 +1212,19 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                             MarqueePalette.Gold,
                             FontWeight.Bold,
                         )
+                        state.recommendationReasons
+                            .takeIf(List<String>::isNotEmpty)
+                            ?.let { reasons ->
+                                Spacer(Modifier.height(6.dp))
+                                AppText(
+                                    "Matches your taste: ${reasons.joinToString(" · ")}",
+                                    11.sp,
+                                    MarqueePalette.Green,
+                                    FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         state.details?.tagline
                             ?.takeIf(String::isNotBlank)
                             ?.let { tagline ->
