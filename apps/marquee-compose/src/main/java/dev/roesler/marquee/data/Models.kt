@@ -143,6 +143,12 @@ data class MediaRow(
      * a watchlist, a continue-watching shelf, or a pool that was already ranked by affinity.
      */
     val personalize: Boolean = true,
+    /**
+     * Whether this shelf may be moved relative to its neighbours. False for rows whose position
+     * is part of their meaning - a watchlist, what you are part-way through - and true for the
+     * generic browse band, where the order is an accident of how the code happens to build them.
+     */
+    val reorderable: Boolean = false,
 )
 
 enum class MediaRowAction {

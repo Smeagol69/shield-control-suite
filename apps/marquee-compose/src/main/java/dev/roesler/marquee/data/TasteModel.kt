@@ -185,6 +185,40 @@ data class TasteModel(
 
     /** Features the model has learned to favour, strongest first, for explaining a row. */
     /**
+     * Orders whole shelves by how well each matches this viewer, leaving pinned ones alone.
+     *
+     * Ranking within a row cannot help a shelf the viewer never scrolls to. Home carries close to
+     * thirty rows, and a fixed order means the best-matching one may sit twenty presses down
+     * purely because of the order the code happens to build them in. Rows keep their contents and
+     * their titles; only the browse band moves, and only relative to itself, so the rows whose
+     * position carries meaning stay exactly where they were.
+     *
+     * A shelf is scored on its strongest few titles rather than its mean: a row is worth reaching
+     * for because of its best entries, and averaging over a long tail buries a shelf that opens
+     * with three perfect matches.
+     */
+    fun orderShelves(rows: List<MediaRow>): List<MediaRow> {
+        if (!trained) return rows
+        val movable = rows.withIndex().filter { it.value.reorderable }
+        if (movable.size < 2) return rows
+        val ranked = movable
+            .sortedByDescending { (_, row) ->
+                row.items
+                    .asSequence()
+                    .map { scoreOf(it) }
+                    .sortedDescending()
+                    .take(SHELF_SAMPLE)
+                    .average()
+                    .takeIf { it.isFinite() } ?: 0.0
+            }
+            .map { it.value }
+        val slots = movable.map { it.index }
+        val result = rows.toMutableList()
+        slots.forEachIndexed { position, index -> result[index] = ranked[position] }
+        return result
+    }
+
+    /**
      * Which features pushed a title up, strongest first.
      *
      * A recommender that cannot say why it chose something is indistinguishable from one that
@@ -320,6 +354,8 @@ data class TasteModel(
         private const val DIVERSITY_PENALTY = 0.22
         private const val DIVERSITY_WINDOW = 3
         private const val FAMILIARITY_HALF = 1.5
+        /** A shelf earns its place on its best entries, not its average one. */
+        private const val SHELF_SAMPLE = 5
         private const val EXPLAIN_LIMIT = 3
         private const val EXPLAIN_MIN_CONTRIBUTION = 0.01
         private const val QUERY_GENRE_LIMIT = 3

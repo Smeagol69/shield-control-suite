@@ -1238,7 +1238,9 @@ class MarqueeController(context: Context) {
     }
 
     private fun publishHome() {
-        homeRankedRows = personalize(homeSourceRows)
+        // Rank inside each shelf first, then rank the shelves themselves: a perfectly ordered row
+        // is worthless if it sits below the fold.
+        homeRankedRows = tasteModel.orderShelves(personalize(homeSourceRows))
         val record = liveRecord()
         _home.value = HomeUiState(
             rows = withLivePlayback(homeRankedRows, record, record?.asMediaItem()),
@@ -1903,19 +1905,19 @@ class MarqueeController(context: Context) {
         }
         val tmdbTasks = listOf(
             "Trending" to async {
-                serviceResult { MediaRow("Trending this week", tmdbClient.trending()) }
+                serviceResult { MediaRow("Trending this week", tmdbClient.trending(), reorderable = true) }
             },
             "Popular movies" to async {
-                serviceResult { MediaRow(FIRST_TMDB_ROW_TITLE, tmdbClient.popularMovies()) }
+                serviceResult { MediaRow(FIRST_TMDB_ROW_TITLE, tmdbClient.popularMovies(), reorderable = true) }
             },
             "Popular TV" to async {
-                serviceResult { MediaRow("Popular on TV", tmdbClient.popularTv()) }
+                serviceResult { MediaRow("Popular on TV", tmdbClient.popularTv(), reorderable = true) }
             },
             "Now playing" to async {
-                serviceResult { MediaRow("Now playing", tmdbClient.nowPlaying()) }
+                serviceResult { MediaRow("Now playing", tmdbClient.nowPlaying(), reorderable = true) }
             },
             "Top rated" to async {
-                serviceResult { MediaRow("Top rated", tmdbClient.topRatedMovies()) }
+                serviceResult { MediaRow("Top rated", tmdbClient.topRatedMovies(), reorderable = true) }
             },
         )
         val tvMazeTask = async { serviceResult { streamingTodayRow() } }
@@ -2312,6 +2314,7 @@ class MarqueeController(context: Context) {
                 .distinctBy { it.key }
                 .take(HOME_GENRE_SHELF_ITEMS),
             subtitle = "Browse ${shelf.label}",
+            reorderable = true,
         )
     }
 
