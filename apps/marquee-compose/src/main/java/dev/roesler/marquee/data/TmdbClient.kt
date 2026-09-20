@@ -256,7 +256,39 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             trailerUrl = trailerUrl,
             certification = certificationOf(json, item.type, region),
             director = directorOf(json, item.type),
+            collection = json.optJSONObject("belongs_to_collection")?.let { group ->
+                val id = group.optInt("id")
+                val name = group.optString("name").trim()
+                if (id > 0 && name.isNotBlank()) {
+                    MediaCollection(
+                        id = id,
+                        name = name.removeSuffix(" Collection").trim().ifBlank { name },
+                        posterUrl = image(group.optNullableString("poster_path"), "w500"),
+                        backdropUrl = image(group.optNullableString("backdrop_path"), "w1280"),
+                    )
+                } else {
+                    null
+                }
+            },
         )
+    }
+
+    /**
+     * The other films in a franchise, oldest first.
+     *
+     * TMDB already hands back `belongs_to_collection` on every movie detail response, so knowing
+     * a title is part of a franchise costs nothing; only pulling the siblings needs a call. Order
+     * is release order rather than popularity because a franchise is a sequence, not a ranking.
+     */
+    fun collectionTitles(collectionId: Int): List<MediaItem> {
+        require(collectionId > 0) { "Collection ID must be positive." }
+        return request("/collection/$collectionId")
+            .optJSONArray("parts")
+            .toObjectSequence()
+            .mapNotNull { mediaItem(it, MediaType.MOVIE) }
+            .filter { it.posterUrl != null }
+            .sortedBy { it.year.toIntOrNull() ?: Int.MAX_VALUE }
+            .toList()
     }
 
     /** Age certification for the region (falling back to US), from TMDB's rating tables. */

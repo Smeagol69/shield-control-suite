@@ -8,6 +8,7 @@ import dev.roesler.marquee.data.CatalogFilter
 import dev.roesler.marquee.data.CatalogProvider
 import dev.roesler.marquee.data.ExpiringLruCache
 import dev.roesler.marquee.data.MarqueeSettings
+import dev.roesler.marquee.data.MediaCollection
 import dev.roesler.marquee.data.MediaDetails
 import dev.roesler.marquee.data.MediaItem
 import dev.roesler.marquee.data.MediaRow
@@ -183,6 +184,8 @@ data class DetailUiState(
     val watchOptions: WatchOptions = WatchOptions(emptyList(), null),
     val recommendations: List<MediaItem> = emptyList(),
     val becauseYouLiked: List<MediaItem> = emptyList(),
+    /** Other films in this title's franchise, release order. */
+    val collectionTitles: List<MediaItem> = emptyList(),
     val inWatchlist: Boolean = false,
     val inTraktWatchlist: Boolean = false,
     val traktConnected: Boolean = false,
@@ -615,6 +618,7 @@ class MarqueeController(context: Context) {
                     watchOptions = providers,
                     recommendations = rankPool(recommendations, watched),
                 )
+                details.collection?.let { loadCollection(details.item, it) }
                 if (tasteStore.verdictOf(details.item) == Verdict.LIKED) {
                     loadDetailSimilar(details.item)
                 }
@@ -1310,6 +1314,26 @@ class MarqueeController(context: Context) {
             "Similar titles, ranked by your ratings"
         } else {
             "${genres.joinToString(" · ")} · ranked by your ratings"
+        }
+    }
+
+    /**
+     * Fetches the rest of a franchise once a title turns out to belong to one.
+     *
+     * Kept off the critical path: the detail screen has already rendered by the time this runs,
+     * and the row simply appears. The title itself is dropped from its own franchise row, and the
+     * result is guarded against a late arrival for a title the viewer has already navigated away
+     * from.
+     */
+    private fun loadCollection(item: MediaItem, collection: MediaCollection) {
+        scope.launch {
+            val parts = serviceResult {
+                withContext(Dispatchers.IO) { tmdbClient.collectionTitles(collection.id) }
+            }.getOrDefault(emptyList())
+            if (currentItem()?.key != item.key) return@launch
+            val siblings = parts.filter { it.key != item.key }
+            if (siblings.isEmpty()) return@launch
+            _detail.value = _detail.value.copy(collectionTitles = siblings)
         }
     }
 

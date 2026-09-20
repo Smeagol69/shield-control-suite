@@ -62,6 +62,16 @@ data class MediaDetails(
     val certification: String? = null,
     /** Director (movies) or creator(s) (series). */
     val director: String? = null,
+    /** The franchise this title belongs to, when TMDB groups it into one. */
+    val collection: MediaCollection? = null,
+)
+
+/** A TMDB collection: a franchise grouping several films under one banner. */
+data class MediaCollection(
+    val id: Int,
+    val name: String,
+    val posterUrl: String? = null,
+    val backdropUrl: String? = null,
 )
 
 data class WatchProvider(

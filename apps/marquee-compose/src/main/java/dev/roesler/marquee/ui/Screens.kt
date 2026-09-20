@@ -1389,6 +1389,25 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                 }
             }
 
+            state.details?.collection?.takeIf { state.collectionTitles.isNotEmpty() }?.let { group ->
+                item {
+                    SectionHeading(
+                        group.name,
+                        "The rest of the franchise, in release order",
+                    )
+                }
+                item {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 7.dp),
+                    ) {
+                        items(state.collectionTitles, key = { it.key }) { part ->
+                            MediaPoster(part, onClick = { controller.openDetails(part) })
+                        }
+                    }
+                }
+            }
+
             if (state.becauseYouLiked.isNotEmpty()) {
                 item {
                     SectionHeading(
