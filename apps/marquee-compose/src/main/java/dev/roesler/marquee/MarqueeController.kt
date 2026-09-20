@@ -600,13 +600,13 @@ class MarqueeController(context: Context) {
             serviceResult {
                 withContext(Dispatchers.IO) {
                     coroutineScope {
-                        val details = async { tmdbClient.details(item) }
-                        val providers = async { tmdbClient.watchOptions(item) }
-                        val recommendations = async { tmdbClient.recommendations(item) }
-                        Triple(details.await(), providers.await(), recommendations.await())
+                        tmdbClient.titleBundle(item)
                     }
                 }
-            }.onSuccess { (details, providers, recommendations) ->
+            }.onSuccess { bundle ->
+                val details = bundle.details
+                val providers = bundle.watchOptions
+                val recommendations = bundle.recommendations
                 // Genre ids only arrive with the detail response; feed them back so a title
                 // rated from a poster row still teaches the taste profile its genres.
                 tasteStore.enrich(details.item)

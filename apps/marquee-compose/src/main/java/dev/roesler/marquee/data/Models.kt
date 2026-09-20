@@ -72,6 +72,17 @@ data class MediaDetails(
     val episodeCount: Int? = null,
     /** Originating network or streamer, for series. */
     val network: String? = null,
+    /** The title's own logo artwork, far better than rendering its name as text. */
+    val logoUrl: String? = null,
+    /** A backdrop with no title text burned into it, when one exists. */
+    val cleanBackdropUrl: String? = null,
+)
+
+/** A title's details plus everything the same request already answered. */
+data class TitleBundle(
+    val details: MediaDetails,
+    val watchOptions: WatchOptions,
+    val recommendations: List<MediaItem>,
 )
 
 /** A TMDB collection: a franchise grouping several films under one banner. */

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -1138,7 +1139,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
             .background(MarqueePalette.Background),
     ) {
         RemoteImage(
-            url = media.backdropUrl,
+            url = state.details?.cleanBackdropUrl ?: media.backdropUrl,
             description = null,
             modifier = Modifier.fillMaxSize(),
         )
@@ -1183,14 +1184,27 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                             .weight(1f)
                             .padding(top = 10.dp),
                     ) {
-                        AppText(
-                            media.title,
-                            34.sp,
-                            MarqueePalette.Text,
-                            FontWeight.Black,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        // A title's own logo artwork reads far better than its name set in
+                        // bold; the text remains the fallback whenever TMDB has no usable one.
+                        val logo = state.details?.logoUrl
+                        if (logo != null) {
+                            RemoteImage(
+                                url = logo,
+                                description = media.title,
+                                modifier = Modifier.height(74.dp).widthIn(max = 360.dp),
+                                contentScale = ContentScale.Fit,
+                                showPlaceholder = false,
+                            )
+                        } else {
+                            AppText(
+                                media.title,
+                                34.sp,
+                                MarqueePalette.Text,
+                                FontWeight.Black,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         Spacer(Modifier.height(9.dp))
                         AppText(
                             buildMetadata(state),

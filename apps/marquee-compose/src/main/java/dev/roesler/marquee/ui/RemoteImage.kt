@@ -33,6 +33,8 @@ fun RemoteImage(
     description: String?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    /** Transparent artwork such as a logo must not sit on the loading gradient. */
+    showPlaceholder: Boolean = true,
 ) {
     val appContext = LocalContext.current.applicationContext
     val safeUrl = remember(url) { UrlPolicy.canonicalMediaImage(url) }
@@ -43,11 +45,15 @@ fun RemoteImage(
     }
 
     Box(
-        modifier = modifier.background(
-            Brush.linearGradient(
-                listOf(Color(0xFF25282F), Color(0xFF111319)),
-            ),
-        ),
+        modifier = if (showPlaceholder) {
+            modifier.background(
+                Brush.linearGradient(
+                    listOf(Color(0xFF25282F), Color(0xFF111319)),
+                ),
+            )
+        } else {
+            modifier
+        },
     ) {
         bitmap.value?.let {
             Image(

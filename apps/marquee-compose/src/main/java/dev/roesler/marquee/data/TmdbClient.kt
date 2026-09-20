@@ -203,12 +203,27 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             .toList()
     }
 
-    fun details(item: MediaItem): MediaDetails {
+    fun details(item: MediaItem): MediaDetails = titleBundle(item).details
+
+    /**
+     * One request for everything the detail screen needs.
+     *
+     * Opening a title used to fire three parallel calls that all append onto the same resource.
+     * TMDB silently ignores append keys it does not recognise, so folding them together costs
+     * nothing and saves two round trips on a device that is often on Wi-Fi.
+     *
+     * `include_image_language` is required: [request] injects `language=en-US`, which would
+     * otherwise filter out every language-neutral logo and backdrop. It takes ISO-639-1 values,
+     * so `en` rather than `en-US`, plus the literal string `null` for the neutral ones.
+     */
+    fun titleBundle(item: MediaItem): TitleBundle {
         val json = request(
             "/${item.type.apiName}/${item.id}",
             mapOf(
                 "append_to_response" to
-                    "external_ids,credits,videos,release_dates,content_ratings",
+                    "external_ids,credits,videos,release_dates,content_ratings," +
+                    "images,recommendations,watch/providers",
+                "include_image_language" to "en,null",
             ),
         )
         val normalized = mediaItem(json, item.type) ?: item
@@ -243,7 +258,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             ?.optString("key")
             ?.let { key -> "https://www.youtube.com/watch?v=$key" }
         val region = settingsStore.load().region
-        return MediaDetails(
+        val details = MediaDetails(
             item = normalized.copy(
                 posterUrl = normalized.posterUrl ?: item.posterUrl,
                 backdropUrl = normalized.backdropUrl ?: item.backdropUrl,
@@ -263,6 +278,10 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 .toObjectSequence()
                 .map { it.optString("name") }
                 .firstOrNull(String::isNotBlank),
+            logoUrl = json.optJSONObject("images")?.optJSONArray("logos").bestLogo(),
+            cleanBackdropUrl = json.optJSONObject("images")
+                ?.optJSONArray("backdrops")
+                .bestTextlessBackdrop(),
             collection = json.optJSONObject("belongs_to_collection")?.let { group ->
                 val id = group.optInt("id")
                 val name = group.optString("name").trim()
@@ -278,7 +297,65 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 }
             },
         )
+
+        val settings = settingsStore.load()
+        // The appended key is the literal path string, slashes included. If TMDB ever stops
+        // honouring it, fall through to the standalone call rather than showing an empty
+        // "Where to watch" row.
+        val appendedProviders = json.optJSONObject("watch/providers")?.optJSONObject("results")
+        val options = if (appendedProviders != null) {
+            parseWatchOptions(appendedProviders, settings.region).also {
+                watchOptionsCache.put("${settings.region}:${item.key}", it)
+            }
+        } else {
+            watchOptions(item)
+        }
+        val recommended = json.optJSONObject("recommendations")
+            ?.let { mediaList(it) }
+            ?: emptyList()
+
+        return TitleBundle(
+            details = details,
+            watchOptions = options,
+            recommendations = recommended,
+        )
     }
+
+    /**
+     * Picks a title's logo.
+     *
+     * SVG is rejected outright: TMDB serves a large share of logos as SVG and the image pipeline
+     * decodes with BitmapFactory, which cannot parse them — a silently blank logo is worse than
+     * the text fallback. English first, then language-neutral, then whichever the community
+     * rated highest.
+     */
+    private fun JSONArray?.bestLogo(): String? =
+        toObjectSequence()
+            .filter { it.optNullableString("file_path")?.endsWith(".svg", ignoreCase = true) == false }
+            .sortedWith(
+                compareByDescending<JSONObject> { it.optString("iso_639_1") == "en" }
+                    .thenByDescending { it.isNull("iso_639_1") }
+                    .thenByDescending { it.optDouble("vote_average").takeIf(Double::isFinite) ?: 0.0 }
+                    .thenByDescending { it.optInt("width") },
+            )
+            .firstOrNull()
+            ?.optNullableString("file_path")
+            ?.let { image(it, "w500") }
+
+    /** Prefers a backdrop with no burned-in title text, and the closest thing to 16:9. */
+    private fun JSONArray?.bestTextlessBackdrop(): String? =
+        toObjectSequence()
+            .sortedWith(
+                compareByDescending<JSONObject> { it.isNull("iso_639_1") }
+                    .thenBy {
+                        val ratio = it.optDouble("aspect_ratio").takeIf(Double::isFinite) ?: 0.0
+                        kotlin.math.abs(ratio - 1.78)
+                    }
+                    .thenByDescending { it.optInt("width") },
+            )
+            .firstOrNull()
+            ?.optNullableString("file_path")
+            ?.let { image(it, "w1280") }
 
     /**
      * The other films in a franchise, oldest first.
@@ -379,13 +456,15 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         watchOptionsCache.get(cacheKey)?.let { return it }
         val results = request("/${item.type.apiName}/${item.id}/watch/providers")
             .optJSONObject("results")
-        val region = results?.optJSONObject(settings.region)
-            ?: results?.optJSONObject("US")
-        if (region == null) {
-            return WatchOptions(emptyList(), null).also {
-                watchOptionsCache.put(cacheKey, it)
-            }
+        return parseWatchOptions(results, settings.region).also {
+            watchOptionsCache.put(cacheKey, it)
         }
+    }
+
+    /** Shared by the standalone call and the appended copy that rides on [titleBundle]. */
+    private fun parseWatchOptions(results: JSONObject?, region: String): WatchOptions {
+        val regional = results?.optJSONObject(region) ?: results?.optJSONObject("US")
+            ?: return WatchOptions(emptyList(), null)
 
         val providers = linkedMapOf<Int, WatchProvider>()
         listOf(
@@ -395,7 +474,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             "rent" to WatchAccess.RENT,
             "buy" to WatchAccess.BUY,
         ).forEach { (arrayName, access) ->
-            val values = region.optJSONArray(arrayName) ?: JSONArray()
+            val values = regional.optJSONArray(arrayName) ?: JSONArray()
             for (index in 0 until values.length()) {
                 val provider = values.optJSONObject(index) ?: continue
                 val id = provider.optInt("provider_id")
@@ -411,8 +490,8 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         }
         return WatchOptions(
             providers = providers.values.toList(),
-            webLink = region.optNullableString("link"),
-        ).also { watchOptionsCache.put(cacheKey, it) }
+            webLink = regional.optNullableString("link"),
+        )
     }
 
     fun isAvailableOn(item: MediaItem, providerId: Int): Boolean =
