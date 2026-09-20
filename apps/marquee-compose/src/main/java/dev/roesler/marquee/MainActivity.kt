@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import dev.roesler.marquee.data.LegacySettingsMigrator
 import dev.roesler.marquee.data.SettingsStore
 import dev.roesler.marquee.ui.AppText
+import dev.roesler.marquee.ui.BrowseScreen
 import dev.roesler.marquee.ui.DetailScreen
 import dev.roesler.marquee.ui.HomeScreen
 import dev.roesler.marquee.ui.LocalMarqueeLayout
@@ -129,6 +130,7 @@ private fun MarqueeApp(controller: MarqueeController) {
     val destination by controller.destination.collectAsState()
     val home by controller.home.collectAsState()
     val providers by controller.providers.collectAsState()
+    val browse by controller.browse.collectAsState()
     val search by controller.search.collectAsState()
     val people by controller.people.collectAsState()
     val detail by controller.detail.collectAsState()
@@ -177,6 +179,7 @@ private fun MarqueeApp(controller: MarqueeController) {
                                         HomeScreen(home, livePlayback, controller)
                                     Destination.PROVIDERS ->
                                         ProvidersScreen(providers, livePlayback, controller)
+                                    Destination.BROWSE -> BrowseScreen(browse, controller)
                                     Destination.SEARCH -> SearchScreen(search, controller)
                                     Destination.PEOPLE -> PeopleScreen(people, controller)
                                     Destination.SETTINGS ->

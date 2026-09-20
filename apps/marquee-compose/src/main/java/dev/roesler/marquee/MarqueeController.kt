@@ -4,6 +4,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import dev.roesler.marquee.data.BrowseAxis
+import dev.roesler.marquee.data.BrowseFacet
+import dev.roesler.marquee.data.BrowseFacets
 import dev.roesler.marquee.data.CatalogFilter
 import dev.roesler.marquee.data.CatalogProvider
 import dev.roesler.marquee.data.ExpiringLruCache
@@ -65,6 +68,7 @@ import java.net.URI
 enum class Destination(val label: String) {
     HOME("Home"),
     PROVIDERS("Providers"),
+    BROWSE("Browse"),
     SEARCH("Search"),
     PEOPLE("People"),
     SETTINGS("Settings"),
@@ -96,6 +100,15 @@ data class HomeUiState(
     val loading: Boolean = false,
     val rows: List<MediaRow> = emptyList(),
     val notice: String? = null,
+    val error: String? = null,
+)
+
+data class BrowseUiState(
+    val loading: Boolean = false,
+    val axis: BrowseAxis = BrowseAxis.DECADE,
+    val facets: List<BrowseFacet> = emptyList(),
+    val selected: BrowseFacet? = null,
+    val items: List<MediaItem> = emptyList(),
     val error: String? = null,
 )
 
@@ -259,6 +272,10 @@ class MarqueeController(context: Context) {
     private val _home = MutableStateFlow(HomeUiState())
     val home: StateFlow<HomeUiState> = _home.asStateFlow()
 
+    private val _browse = MutableStateFlow(BrowseUiState())
+    val browse: StateFlow<BrowseUiState> = _browse.asStateFlow()
+    private var browseJob: Job? = null
+
     private val _providers = MutableStateFlow(ProvidersUiState())
     val providers: StateFlow<ProvidersUiState> = _providers.asStateFlow()
 
@@ -305,6 +322,7 @@ class MarqueeController(context: Context) {
         if (destination == Destination.PROVIDERS && _providers.value.providers.isEmpty()) {
             refreshProviders()
         }
+        if (destination == Destination.BROWSE) prepareBrowse()
         if (
             destination == Destination.PEOPLE &&
             _people.value.people.isEmpty() &&
@@ -1185,6 +1203,83 @@ class MarqueeController(context: Context) {
                 }
                 row.copy(items = ranked).takeIf { ranked.isNotEmpty() }
             }
+        }
+    }
+
+    /** Switches the Browse screen to a different axis, keeping whatever was already loaded. */
+    fun selectBrowseAxis(axis: BrowseAxis) {
+        if (_browse.value.axis == axis) return
+        val facets = BrowseFacets.forAxis(axis)
+        val selected = facets.firstOrNull()
+        _browse.value = _browse.value.copy(axis = axis, facets = facets, selected = selected)
+        selected?.let(::loadBrowseFacet)
+    }
+
+    fun selectBrowseFacet(facet: BrowseFacet) {
+        if (_browse.value.selected?.id == facet.id && _browse.value.items.isNotEmpty()) return
+        loadBrowseFacet(facet)
+    }
+
+    /**
+     * Opens Browse on the viewer's own decade.
+     *
+     * The learner has been computing an era preference since it was added and has never had
+     * anywhere to express it; reading that weight here means the screen is personal on first
+     * open with nothing to configure.
+     */
+    private fun prepareBrowse() {
+        if (_browse.value.items.isNotEmpty() || _browse.value.loading) return
+        val facets = BrowseFacets.forAxis(BrowseAxis.DECADE)
+        val opening = BrowseFacets.defaultDecade(tasteModel)
+        _browse.value = BrowseUiState(axis = BrowseAxis.DECADE, facets = facets, selected = opening)
+        loadBrowseFacet(opening)
+    }
+
+    private fun loadBrowseFacet(facet: BrowseFacet) {
+        if (_settings.value.tmdbCredential.isBlank()) {
+            _browse.value = _browse.value.copy(error = "Add a TMDB credential in Settings.")
+            return
+        }
+        browseJob?.cancel()
+        _browse.value = _browse.value.copy(
+            loading = true,
+            selected = facet,
+            error = null,
+            items = emptyList(),
+        )
+        browseJob = scope.launch {
+            val loaded = serviceResult {
+                withContext(Dispatchers.IO) {
+                    coroutineScope {
+                        val movies = async {
+                            tmdbClient.discover(MediaType.MOVIE, facet.parametersFor(MediaType.MOVIE))
+                        }
+                        val shows = async {
+                            tmdbClient.discover(MediaType.TV, facet.parametersFor(MediaType.TV))
+                        }
+                        interleaveByType(movies.await(), shows.await())
+                    }
+                }
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                _browse.value = _browse.value.copy(loading = false, error = it.userMessage())
+                return@launch
+            }
+
+            val watched = watchHistoryStore.watchedKeys()
+            val labelled = facet.contextLabel?.let { label ->
+                // Discover carries no runtime, so the promise is captioned rather than re-checked
+                // per title, which would cost one detail request each.
+                loaded.map { item -> item.copy(contextLabel = label) }
+            } ?: loaded
+            val ranked = tasteModel.rank(
+                items = tasteStore.profile().withoutDisliked(labelled).distinctBy { it.key },
+                watchedKeys = watched,
+                profile = tasteStore.profile(),
+                // sort_by is the promise of the chip; taste nudges rather than re-sorts.
+                preserveSourceOrder = true,
+            )
+            _browse.value = _browse.value.copy(loading = false, items = ranked, error = null)
         }
     }
 

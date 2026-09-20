@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.roesler.marquee.BrowseUiState
 import dev.roesler.marquee.DetailUiState
 import dev.roesler.marquee.HomeUiState
 import dev.roesler.marquee.LaunchResult
@@ -61,6 +62,8 @@ import dev.roesler.marquee.SearchUiState
 import dev.roesler.marquee.TasteUiState
 import dev.roesler.marquee.TraktPhase
 import dev.roesler.marquee.TraktUiState
+import dev.roesler.marquee.data.BrowseAxis
+import dev.roesler.marquee.data.BrowseFacet
 import dev.roesler.marquee.data.CatalogFilter
 import dev.roesler.marquee.data.CatalogProvider
 import dev.roesler.marquee.data.MarqueeSettings
@@ -598,6 +601,59 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
                         EmptyState("No people found", "Try a full actor or director name.")
                     else -> PeopleGrid(state.people, controller)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Browse: pick an axis, pick a chip, get a grid.
+ *
+ * Structured like ProvidersScreen so the two feel like one app, and kept to two short strips so
+ * anything on the screen is within three D-pad presses. This is also where new discovery lands
+ * from now on: Home is already close to thirty rows, and every further shelf there costs the
+ * viewer scrolling on the screen they see most.
+ */
+@Composable
+fun BrowseScreen(state: BrowseUiState, controller: MarqueeController) {
+    Column(Modifier.fillMaxSize()) {
+        SectionHeading(
+            "Browse",
+            state.selected?.let { "${it.axis.label} · ${it.label}" } ?: "Pick a decade, mood, or length",
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BrowseAxis.entries.forEach { axis ->
+                ActionButton(
+                    label = axis.label,
+                    primary = state.axis == axis,
+                    onClick = { controller.selectBrowseAxis(axis) },
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(vertical = 4.dp),
+        ) {
+            items(state.facets, key = BrowseFacet::id) { facet ->
+                ActionButton(
+                    label = facet.label,
+                    primary = state.selected?.id == facet.id,
+                    onClick = { controller.selectBrowseFacet(facet) },
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                state.loading && state.items.isEmpty() ->
+                    BusyState("Finding ${state.selected?.label ?: "titles"}")
+                state.error != null && state.items.isEmpty() ->
+                    EmptyState("Couldn't load that", state.error)
+                state.items.isEmpty() ->
+                    EmptyState("Nothing here", "Try another ${state.axis.label.lowercase()}.")
+                else -> MediaGrid(state.items, controller)
             }
         }
     }

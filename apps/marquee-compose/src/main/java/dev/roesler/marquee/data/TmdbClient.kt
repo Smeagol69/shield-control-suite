@@ -13,6 +13,10 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         maxEntries = WATCH_OPTIONS_CACHE_SIZE,
         ttlMillis = AVAILABILITY_TTL_MS,
     )
+    private val discoverCache = ExpiringLruCache<String, List<MediaItem>>(
+        maxEntries = DISCOVER_CACHE_SIZE,
+        ttlMillis = CATALOG_TTL_MS,
+    )
     private val similarCache = ExpiringLruCache<String, List<MediaItem>>(
         maxEntries = SIMILAR_CACHE_SIZE,
         ttlMillis = CATALOG_TTL_MS,
@@ -188,6 +192,37 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             parameters[to] = "${decade + 9}-12-31"
         }
         return mediaList(request("/discover/${type.apiName}", parameters), type)
+    }
+
+    /**
+     * One way in to `/discover`, so new browse facets do not each grow their own copy.
+     *
+     * `forcedType` is not optional: discover results carry no `media_type`, and MediaType.from()
+     * guesses TV for anything with a blank `title`, which silently mislabels every film.
+     *
+     * Narrow facets must take the deep path. mediaItems() drops results with no poster, and while
+     * attrition is near zero on /movie/popular it runs 20-35% on the queries this powers - low
+     * vote counts, older titles, non-English - so a single 20-item page would arrive half empty.
+     */
+    fun discover(
+        type: MediaType,
+        parameters: Map<String, String>,
+        deep: Boolean = true,
+    ): List<MediaItem> {
+        val base = linkedMapOf("include_adult" to "false")
+        if (type == MediaType.MOVIE) base["include_video"] = "false"
+        val query = base + parameters
+        val cacheKey = "${type.apiName}|" + query.entries
+            .sortedBy { it.key }
+            .joinToString("&") { "${it.key}=${it.value}" }
+        discoverCache.get(cacheKey)?.let { return it }
+        val items = if (deep) {
+            discoveryMediaList("/discover/${type.apiName}", query, forcedType = type)
+        } else {
+            mediaList(request("/discover/${type.apiName}", query), type)
+        }
+        if (items.isNotEmpty()) discoverCache.put(cacheKey, items)
+        return items
     }
 
     fun searchTitles(query: String): List<MediaItem> =
@@ -764,6 +799,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val DISCOVERY_MAX_PAGES = 4
         private const val WATCH_OPTIONS_CACHE_SIZE = 256
         private const val SIMILAR_CACHE_SIZE = 48
+        private const val DISCOVER_CACHE_SIZE = 64
         private const val AVAILABILITY_TTL_MS = 6L * 60L * 60L * 1_000L
         private const val CATALOG_TTL_MS = 30L * 60L * 1_000L
         private const val DEFAULT_PROVIDER_PRIORITY = 10_000
