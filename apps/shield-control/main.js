@@ -7,6 +7,9 @@ const { spawn, execFile, execFileSync } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { resolvePullRoot, sanitizeName, uniqueLocalPath } = require('./lib/transfer-paths');
 const {
+  parseMdnsServices, parseArpNeighbours, mergeCandidates, rankCandidates, looksLikeShield,
+} = require('./lib/discovery');
+const {
   clampUpdatePercent,
   detectUpdateMode,
   updateErrorMessage,
@@ -35,6 +38,7 @@ const binaries = {
 const DEFAULTS = {
   ip: '10.0.0.6',
   port: 5555,
+  mdnsName: null,                         // stable across DHCP moves; used to re-find this Shield
   lastDir: '/sdcard/Download',
   pushDir: '/sdcard/Download',            // default landing folder for dropped files
   kodiDropDir: '/sdcard/Download/KodiDrop',
@@ -315,6 +319,61 @@ async function settleConnected(serial, transport, detail) {
   collectSlow();
 }
 
+/** The OS keeps a list of every neighbour it has spoken to; reading it beats scanning for them. */
+function readArpTable() {
+  return new Promise((resolve) => {
+    execFile('arp', ['-a'], { timeout: 5000, windowsHide: true }, (error, stdout) => {
+      resolve(error ? '' : String(stdout || ''));
+    });
+  });
+}
+
+/**
+ * Re-finds the Shield when its remembered address stops answering.
+ *
+ * Tries every adb service on the network, most-likely first, and keeps the one that actually
+ * identifies as a Shield. Checking the model matters: a household can easily have another Android
+ * device advertising adb, and silently adopting a phone would be worse than failing. On success
+ * the new address is persisted, so this costs one discovery per DHCP move, not one per launch.
+ */
+async function discoverShield() {
+  const listing = await runAdb(['mdns', 'services'], { timeoutMs: 8000 });
+  const announced = parseMdnsServices(listing.out);
+  // mDNS is the right mechanism but an unreliable one - the responder resets with the adb server
+  // and a query moments later can come back empty for a device that is plainly reachable. The
+  // ARP table costs nothing and needs no cooperation from the Shield, so it backs mDNS up.
+  const neighbours = parseArpNeighbours(await readArpTable(), {
+    subnetOf: config.ip,
+    port: config.port,
+  });
+  const candidates = rankCandidates(mergeCandidates(announced, neighbours), {
+    knownName: config.mdnsName,
+    knownIp: config.ip,
+  });
+  for (const candidate of candidates) {
+    if (candidate.serial === wifiSerial()) continue; // the remembered one already failed
+    const con = await runAdb(['connect', candidate.serial], { timeoutMs: 8000 });
+    if (!/connected to/i.test(con.out)) continue;
+    const devices = await adbDevices();
+    const status = devices.get(candidate.serial);
+    if (status === 'unauthorized') {
+      // Worth surfacing rather than skipping: it is the right device and one tap fixes it.
+      return { candidate, unauthorized: true };
+    }
+    if (status !== 'device') {
+      await runAdb(['disconnect', candidate.serial]);
+      continue;
+    }
+    const props = await fetchProps(candidate.serial);
+    if (!looksLikeShield(props.model)) {
+      await runAdb(['disconnect', candidate.serial]);
+      continue;
+    }
+    return { candidate, unauthorized: false, props };
+  }
+  return null;
+}
+
 async function connectFlow(trigger) {
   if (connectBusy) return;
   if (!binaries.adb) {
@@ -379,6 +438,24 @@ async function connectFlow(trigger) {
         });
         return;
       }
+    }
+
+    // 3) the address moved. DHCP reassigns, and the old IP is often handed to something else,
+    // so a refused connection is not evidence the Shield is off - ask the network where it went.
+    setState({ status: 'connecting', detail: `${wifiSerial()} did not answer - looking for the Shield...` });
+    const found = await discoverShield();
+    if (found) {
+      const { candidate } = found;
+      saveConfig({ ip: candidate.ip, port: candidate.port, mdnsName: candidate.name });
+      if (found.unauthorized) {
+        setState({
+          status: 'unauthorized', transport: null, serial: null,
+          detail: `Found the Shield at ${candidate.serial} - allow debugging on it (check "Always allow")`,
+        });
+        return;
+      }
+      await settleConnected(candidate.serial, 'wifi', `Address changed - found it at ${candidate.serial}`);
+      return;
     }
 
     const blob = con.out + '\n' + con.err;
