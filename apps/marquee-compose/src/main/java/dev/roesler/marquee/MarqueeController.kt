@@ -1935,6 +1935,9 @@ class MarqueeController(context: Context) {
         val traktPlayback = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.playbackProgress() } }
         }
+        val traktUpNext = includeTrakt.takeIf { it }?.let {
+            async { serviceResult { traktClient.upNext() } }
+        }
 
         val warnings = mutableListOf<String>()
         val localPlayback = localPlaybackTask.await().getOrElse {
@@ -2013,7 +2016,22 @@ class MarqueeController(context: Context) {
             // Trakt history is the record of everything watched away from this Shield.
             importTraktHistory(recentEntries)
 
-            playback.takeIf(List<MediaItem>::isNotEmpty)?.let {
+            val upNext = collectTrakt(
+                checkNotNull(traktUpNext).await(),
+                "Trakt up next",
+            )
+            upNext.takeIf(List<MediaItem>::isNotEmpty)?.let {
+                traktRows += MediaRow(
+                    title = "Up next",
+                    items = it,
+                    subtitle = "The next episode of what you're watching",
+                    personalize = false,
+                )
+            }
+            val upNextKeys = upNext.mapTo(hashSetOf()) { it.key }
+            playback
+                .filterNot { it.key in upNextKeys }
+                .takeIf(List<MediaItem>::isNotEmpty)?.let {
                 traktRows += MediaRow(
                     title = "Continue watching",
                     items = it,

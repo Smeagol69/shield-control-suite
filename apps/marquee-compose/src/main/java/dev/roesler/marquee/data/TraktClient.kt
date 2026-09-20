@@ -209,6 +209,57 @@ class TraktClient(
             "/sync/playback?limit=$PLAYBACK_LIMIT&extended=full%2Cimages",
         ).arrayBody().toPlaybackItems()
 
+    /**
+     * The next unwatched episode of every series in progress.
+     *
+     * This closes the largest hole in the app: `/sync/playback` only knows about a title you
+     * stopped *mid-episode*, so finishing an episode cleanly made the whole series disappear
+     * from Marquee until you searched for it again — the single most common thing a person does
+     * on a TV device. One request answers it for every show at once, rather than fanning out a
+     * progress call per series.
+     *
+     * The episode's own tmdb id is deliberately ignored: it is episode-level and frequently null,
+     * while everything in Marquee is keyed on the *show*.
+     */
+    fun upNext(): List<MediaItem> {
+        val response = authorizedRequest(
+            "/sync/progress/up_next?extended=full&limit=$UP_NEXT_LIMIT" +
+                "&sort_by=last_watched_at&sort_how=desc",
+        )
+        // A viewer with nothing in progress gets 204 with no body, which arrayBody() would
+        // otherwise report as malformed.
+        if (response.status == 204 || response.body.isBlank()) return emptyList()
+        val array = runCatching { response.arrayBody() }.getOrNull() ?: return emptyList()
+        val entries = LinkedHashMap<String, MediaItem>()
+        for (index in 0 until array.length()) {
+            val wrapper = array.optJSONObject(index) ?: continue
+            val progress = wrapper.optJSONObject("progress") ?: continue
+            val next = progress.optJSONObject("next_episode") ?: continue
+            val show = wrapper.toMediaItem(MediaType.TV) ?: continue
+            val season = next.optInt("season", -1)
+            val number = next.optInt("number", -1)
+            if (season < 0 || number < 0) continue
+            val episodeTitle = next.optString("title").trim()
+            val aired = progress.optInt("aired", 0)
+            val completed = progress.optInt("completed", 0)
+            entries.putIfAbsent(
+                show.key,
+                show.copy(
+                    contextLabel = buildString {
+                        append("S%02d E%02d".format(season, number))
+                        if (episodeTitle.isNotBlank()) append(" · $episodeTitle")
+                    },
+                    progressPercent = if (aired > 0) {
+                        (100.0 * completed / aired).coerceIn(0.0, 100.0)
+                    } else {
+                        null
+                    },
+                ),
+            )
+        }
+        return entries.values.toList()
+    }
+
     fun setWatchlisted(item: MediaItem, watchlisted: Boolean) {
         val collection = if (item.type == MediaType.MOVIE) "movies" else "shows"
         val body = JSONObject().put(
@@ -503,6 +554,11 @@ class TraktClient(
             rating = media.optDouble("rating").takeIf(Double::isFinite) ?: 0.0,
             imdbId = ids.optString("imdb")
                 .takeIf { it.matches(IMDB_ID) },
+            // Mapped here rather than at each call site: every Trakt row reaches the taste model
+            // through this function, and without genre ids TasteFeatures emits only the bias,
+            // type, decade and quality terms - so "Movies for you" and "Shows for you", the rows
+            // most meant to be personalized, were being ranked on almost no signal.
+            genreIds = media.traktGenreIds(type),
         )
     }
 
@@ -581,6 +637,7 @@ class TraktClient(
         /** Trakt scores at or above this read as a thumbs-up; at or below the other, a thumbs-down. */
         private const val LIKED_AT_OR_ABOVE = 7
         private const val DISLIKED_AT_OR_BELOW = 4
+        private const val UP_NEXT_LIMIT = 20
         private const val HISTORY_PAGE_SIZE = 100
         private const val HISTORY_MAX_PAGES = 10
 
