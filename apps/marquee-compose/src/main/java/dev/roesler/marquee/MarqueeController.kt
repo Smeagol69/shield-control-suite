@@ -41,6 +41,7 @@ import dev.roesler.marquee.data.WatchSource
 import dev.roesler.marquee.data.WatchedTitle
 import dev.roesler.marquee.data.WatchHistoryStore
 import dev.roesler.marquee.data.WatchlistStore
+import dev.roesler.marquee.data.WatchOrderCatalog
 import dev.roesler.marquee.data.filterCatalogRows
 import dev.roesler.marquee.data.forHistory
 import dev.roesler.marquee.data.key
@@ -167,6 +168,7 @@ data class RatingPromptUiState(
     val providerName: String?,
     val episodeLabel: String?,
     val completed: Boolean,
+    val nextWatch: NextWatchUiState? = null,
 ) {
     val question: String
         get() = if (completed) {
@@ -175,6 +177,15 @@ data class RatingPromptUiState(
             "You stopped watching ${item.title}. Did you like it?"
         }
 }
+
+/** A direct handoff to the next movie in a curated universe or TMDB collection. */
+data class NextWatchUiState(
+    val item: MediaItem,
+    val sequenceName: String,
+    /** One-based position of [item] in its sequence. */
+    val position: Int,
+    val total: Int,
+)
 
 /** What the taste profile currently knows, for the Settings summary. */
 data class TasteUiState(
@@ -725,6 +736,17 @@ class MarqueeController(context: Context) {
         val prompt = _ratingPrompt.value ?: return
         dismissRatingPrompt()
         openDetails(prompt.item)
+    }
+
+    /** Clears the completed-title prompt and hands its suggested successor to the resolver. */
+    fun playNextFromRatingPrompt(): LaunchResult {
+        val prompt = _ratingPrompt.value
+            ?: return LaunchResult.Unavailable("There is no completed title to continue.")
+        val next = prompt.nextWatch
+            ?: return LaunchResult.Unavailable("No next movie is available for this title.")
+        playbackStore.markRatingHandled(prompt.item.key)
+        advanceRatingPrompt()
+        return openPreferredResolver(next.item)
     }
 
     fun clearTasteProfile() {
@@ -1727,13 +1749,14 @@ class MarqueeController(context: Context) {
         if (changed) _taste.value = _taste.value.copy(watchedCount = watchHistoryStore.size())
     }
 
-    private fun offerRatingPrompt(now: Long) {
+    private suspend fun offerRatingPrompt(now: Long) {
         if (!_settings.value.ratingPrompts) return
         val finished = playbackStore.consumeRateablePlayback(now)
         if (finished.isEmpty()) return
         finished.forEach { record ->
             val media = record.media ?: return@forEach
             if (tasteStore.verdictOf(media) != null) return@forEach
+            val completed = record.isCompleted(now)
             watchHistoryStore.record(
                 WatchedTitle(
                     item = media.forHistory(),
@@ -1741,22 +1764,64 @@ class MarqueeController(context: Context) {
                     firstWatchedAtEpochMillis = record.observedAtEpochMillis,
                     lastWatchedAtEpochMillis = record.observedAtEpochMillis,
                     playCount = 1,
-                    completed = record.isCompleted(now),
+                    completed = completed,
                     progressPercent = record.progressPercentAt(now),
                     episodeLabel = record.episodeLabel,
                     providerName = record.providerName,
                 ),
             )
+            val nextWatch = if (completed) {
+                withContext(Dispatchers.IO) {
+                    serviceResult { nextWatchAfter(media) }.getOrNull()
+                }
+            } else {
+                null
+            }
             pendingRatingPrompts.addLast(
                 RatingPromptUiState(
                     item = media.forHistory(),
                     providerName = record.providerName,
                     episodeLabel = record.episodeLabel,
-                    completed = record.isCompleted(now),
+                    completed = completed,
+                    nextWatch = nextWatch,
                 ),
             )
         }
         if (_ratingPrompt.value == null) advanceRatingPrompt()
+    }
+
+    /**
+     * Curated story order wins over release order. This is essential for shared universes such
+     * as MonsterVerse, whose films are split across TMDB collections and whose chronology does
+     * not match release dates. Every ordinary movie collection still receives a useful fallback.
+     */
+    private fun nextWatchAfter(item: MediaItem): NextWatchUiState? {
+        if (item.type != MediaType.MOVIE) return null
+        val completedKeys = watchHistoryStore.completedKeys()
+        WatchOrderCatalog.nextUnwatchedAfter(item, completedKeys)?.let { suggestion ->
+            val seed = suggestion.entry.asMediaItem()
+            val hydrated = runCatching { tmdbClient.details(seed).item }.getOrDefault(seed)
+            return NextWatchUiState(
+                item = hydrated,
+                sequenceName = suggestion.sequenceName,
+                position = suggestion.position,
+                total = suggestion.total,
+            )
+        }
+
+        val collection = tmdbClient.details(item).collection ?: return null
+        val titles = tmdbClient.collectionTitles(collection.id)
+        val currentIndex = titles.indexOfFirst { it.id == item.id }
+        if (currentIndex < 0) return null
+        val next = (currentIndex + 1 until titles.size)
+            .firstOrNull { titles[it].key !in completedKeys }
+            ?: return null
+        return NextWatchUiState(
+            item = titles[next],
+            sequenceName = collection.name,
+            position = next + 1,
+            total = titles.size,
+        )
     }
 
     private fun resolvePlaybackRecord(record: PlaybackRecord): MediaItem? {

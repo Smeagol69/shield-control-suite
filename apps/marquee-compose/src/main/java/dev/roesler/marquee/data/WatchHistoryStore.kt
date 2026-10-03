@@ -87,6 +87,13 @@ class WatchHistoryStore(
     @Synchronized
     fun watchedKeys(): Set<String> = index().keys.toSet()
 
+    /** Titles finished to the playback threshold; partial sessions remain valid resume targets. */
+    @Synchronized
+    fun completedKeys(): Set<String> = index().values
+        .asSequence()
+        .filter(WatchedTitle::completed)
+        .mapTo(hashSetOf(), WatchedTitle::key)
+
     @Synchronized
     fun contains(item: MediaItem): Boolean = index().containsKey(item.key)
 

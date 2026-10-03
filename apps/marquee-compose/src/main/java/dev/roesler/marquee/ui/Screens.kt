@@ -1571,6 +1571,8 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
 @Composable
 fun RatingPromptBanner(state: RatingPromptUiState, controller: MarqueeController) {
     val requester = remember { FocusRequester() }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val next = state.nextWatch
     LaunchedEffect(state.item.key) {
         runCatching { requester.requestFocus() }
     }
@@ -1585,8 +1587,8 @@ fun RatingPromptBanner(state: RatingPromptUiState, controller: MarqueeController
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         RemoteImage(
-            url = state.item.posterUrl,
-            description = state.item.title,
+            url = next?.item?.posterUrl ?: state.item.posterUrl,
+            description = next?.item?.title ?: state.item.title,
             modifier = Modifier
                 .width(38.dp)
                 .height(57.dp)
@@ -1610,19 +1612,50 @@ fun RatingPromptBanner(state: RatingPromptUiState, controller: MarqueeController
                 ?.let {
                     AppText(it, 10.sp, MarqueePalette.Muted, FontWeight.Medium)
                 }
+            next?.let { suggestion ->
+                Spacer(Modifier.height(3.dp))
+                AppText(
+                    "UP NEXT IN ${suggestion.sequenceName.uppercase()}  ·  " +
+                        "${suggestion.position}/${suggestion.total}",
+                    9.sp,
+                    MarqueePalette.Gold,
+                    FontWeight.ExtraBold,
+                    maxLines = 1,
+                )
+                AppText(
+                    listOf(suggestion.item.title, suggestion.item.year)
+                        .filter(String::isNotBlank)
+                        .joinToString("  ·  "),
+                    12.sp,
+                    MarqueePalette.Text,
+                    FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        next?.let {
+            ActionButton(
+                label = "▶ Play next",
+                primary = true,
+                onClick = { controller.playNextFromRatingPrompt().show(context) },
+                modifier = Modifier.focusRequester(requester),
+            )
         }
         ActionButton(
             label = "👍 Liked it",
-            primary = true,
+            primary = next == null,
             onClick = { controller.answerRatingPrompt(Verdict.LIKED) },
-            modifier = Modifier.focusRequester(requester),
+            modifier = if (next == null) Modifier.focusRequester(requester) else Modifier,
         )
         ActionButton(
             label = "👎 Not for me",
             onClick = { controller.answerRatingPrompt(Verdict.DISLIKED) },
         )
-        ActionButton(label = "Details", onClick = controller::openRatingPromptDetails)
-        ActionButton(label = "Skip", onClick = controller::dismissRatingPrompt)
+        if (next == null) {
+            ActionButton(label = "Details", onClick = controller::openRatingPromptDetails)
+        }
+        ActionButton(label = if (next == null) "Skip" else "Later", onClick = controller::dismissRatingPrompt)
     }
 }
 

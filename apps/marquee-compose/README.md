@@ -13,6 +13,9 @@ legacy package ID `dev.roesler.marquee`.
   watchlist, plus a cast row that opens each person's filmography.
 - Like and dislike on every detail screen, plus a prompt that appears on its own
   once something finishes so a verdict costs two presses of the remote.
+- Post-finish watch-order handoff: curated story chronology for shared universes
+  (including MonsterVerse) with a one-click `Play next` action, plus automatic
+  release-order continuation for other TMDB movie collections.
 - A local watch history that folds together the playback bridge, Trakt history,
   and explicit mark-watched actions into one `Everything you've watched` shelf.
 - Taste-ranked discovery: every catalog row is re-ordered from your ratings, and
