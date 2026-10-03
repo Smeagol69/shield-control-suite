@@ -1,28 +1,20 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$AdbPath,
-
-    [string]$Serial = "10.0.0.6:5555"
+    [string]$Serial
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if (-not (Test-Path -LiteralPath $AdbPath -PathType Leaf)) {
-    throw "adb was not found at: $AdbPath"
-}
+$connectionScript = Join-Path $PSScriptRoot '..\..\shield-control\tools\ShieldConnection.ps1'
+. $connectionScript
+$connection = Resolve-ShieldConnection -AdbPath $AdbPath -Serial $Serial
+$AdbPath = $connection.Adb
+$Serial = $connection.Serial
 
 $monitor = "dev.roesler.marquee/dev.roesler.marquee.playback.PlaybackMonitorService"
 $capture = "dev.roesler.marquee/dev.roesler.marquee.playback.PlaybackCaptureService"
-
-& $AdbPath start-server | Out-Null
-if ($Serial.Contains(":")) {
-    & $AdbPath connect $Serial | Out-Null
-}
-if ((& $AdbPath -s $Serial get-state).Trim() -ne "device") {
-    throw "The Shield is not connected over adb: $Serial"
-}
 
 & $AdbPath -s $Serial shell cmd notification allow_listener $monitor | Out-Null
 

@@ -1,7 +1,7 @@
 {
   "name": "shield-control",
   "productName": "Shield Control",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Desktop control center for NVIDIA Shield TV over adb — screen control, file transfer, APK install.",
   "author": "roesler",
   "license": "MIT",
@@ -80,11 +80,12 @@
     }
   },
   "devDependencies": {
-    "electron": "^43.1.0",
-    "electron-builder": "^26.15.3"
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
   },
   "overrides": {
-    "fast-uri": "3.1.4"
+    "fast-uri": "3.1.8",
+    "http-cache-semantics": "4.2.0"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"

@@ -37,9 +37,12 @@ After installing Marquee, enable its two local Android services:
 
 ```powershell
 .\apps\marquee-compose\tools\enable-playback-bridge.ps1 `
-  -AdbPath C:\path\to\adb.exe `
-  -Serial 10.0.0.6:5555
+  -AdbPath C:\path\to\adb.exe
 ```
+
+Both arguments are optional when Shield Control is installed: the script finds its
+bundled adb and discovers the active Shield. Use `-Serial host:5555` only to select a
+specific device.
 
 The script preserves any already-enabled accessibility services. Android keeps
 the grants across signed in-place APK upgrades. Marquee Settings shows the

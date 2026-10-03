@@ -1,9 +1,9 @@
 #!/usr/bin/env pwsh
 # shield.ps1 — one-command control surface for the NVIDIA Shield TV.
 #
-# Wraps the adb bundled with this project (no system adb needed) and pins it to
-# the Shield at 10.0.0.6:5555. Any Claude Code session (or you) can drive the
-# device through this without re-deriving paths, serial, or the root pattern.
+# Finds Shield Control's bundled adb and discovers the connected Shield. Any
+# automation session can drive the device without re-deriving paths, serial, or
+# the root pattern. SHIELD_ADB and SHIELD_SERIAL provide optional overrides.
 #
 #   ./tools/shield.ps1 shell getprop ro.product.model     # any adb subcommand
 #   ./tools/shield.ps1 root 'ls -al /data/data'           # run as root (Magisk su)
@@ -18,18 +18,20 @@
 
 param(
   [Parameter(Position = 0)] [string] $Cmd,
-  [Parameter(Position = 1, ValueFromRemainingArguments = $true)] [string[]] $Rest
+  [Parameter(Position = 1, ValueFromRemainingArguments = $true)] [string[]] $Rest,
+  [string] $Serial,
+  [string] $AdbPath
 )
 
 $ErrorActionPreference = 'Stop'
-$Serial = '10.0.0.6:5555'
-$Adb = Join-Path $PSScriptRoot '..\vendor\platform-tools\adb.exe'
-if (-not (Test-Path $Adb)) { throw "bundled adb not found at $Adb" }
+. (Join-Path $PSScriptRoot 'ShieldConnection.ps1')
+$connection = Resolve-ShieldConnection -AdbPath $AdbPath -Serial $Serial
+$Adb = $connection.Adb
+$Serial = $connection.Serial
 
 function Ensure-Connected {
-  $devs = & $Adb devices
-  if ($devs -notmatch [regex]::Escape($Serial) -or $devs -notmatch "$([regex]::Escape($Serial))\s+device") {
-    & $Adb connect $Serial | Out-Null
+  if (-not (Test-ShieldEndpoint -Adb $Adb -Serial $Serial)) {
+    throw "The Shield disconnected: $Serial"
   }
 }
 
@@ -41,7 +43,7 @@ function rp([string] $p) {
 }
 
 switch ($Cmd) {
-  'connect' { & $Adb connect $Serial; break }
+  'connect' { Write-Output "Connected to $Serial"; break }
   'root' {
     Ensure-Connected
     $inner = ($Rest -join ' ')

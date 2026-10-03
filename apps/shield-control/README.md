@@ -34,14 +34,15 @@ Development and `SHIELD_SMOKE` sessions never contact the update feed.
 
 ## How it connects
 
-On launch the app runs `adb connect 10.0.0.6:5555`. If WiFi fails it looks for a USB
-device, re-enables WiFi adb with `adb tcpip 5555`, and retries; if WiFi is still
-unreachable it keeps working over USB. It retries automatically every ~10 s and
-self-heals stale (`offline`) connections.
+On launch the app reconnects to the last successful endpoint. If that address moved,
+it discovers the Shield through adb mDNS and the local ARP table, validates the device
+model, and saves the new address. It then falls back to USB, re-enables WiFi adb with
+`adb tcpip 5555`, and retries. It polls automatically and self-heals stale (`offline`)
+connections.
 
 - Green pill = connected. Amber = connecting/authorize on TV. Red = unreachable.
-- Settings persist in `%APPDATA%\Shield Control\config.json` (`ip`, `port`, last folder).
-  Edit `ip` there if the Shield's address ever changes — there is no setup UI by design.
+- Settings persist in `%APPDATA%\Shield Control\config.json` (`ip`, `port`, mDNS name,
+  and last folder). Address changes are repaired automatically; there is no setup UI.
 
 ## Status dashboard
 

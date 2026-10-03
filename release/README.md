@@ -14,8 +14,8 @@ The release contains:
 - AdGuard Home Shield deployment package
 - `SHA256SUMS.txt`
 
-Marquee can also ship as a component release, such as
-[`marquee-v2.6.0`](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.6.0).
+Marquee also ships as a component release, currently
+[`marquee-v2.7.0`](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.7.0).
 Component releases are intentionally not marked as the repository's latest
 release, so Shield Control continues to resolve its Electron update metadata
 from the latest suite release.

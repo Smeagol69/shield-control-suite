@@ -1,20 +1,21 @@
 # AdGuard Home on NVIDIA Shield
 
-AdGuard Home v0.107.78 runs as root on the Shield at `10.0.0.6`.
+AdGuard Home v0.107.78 runs as root on the Shield. Its current reserved address is
+`10.0.0.11`; the maintenance scripts discover the active adb address automatically.
 
 ## Endpoints
 
-- DNS: `10.0.0.6:53` (TCP and UDP)
-- Dashboard: `http://10.0.0.6:3000`
+- DNS: `10.0.0.11:53` (TCP and UDP)
+- Dashboard: `http://10.0.0.11:3000`
 - Credentials: `credentials.txt`
 - Upstream: Quad9 DNS-over-HTTPS
 - Filter: AdGuard DNS filter, refreshed every 24 hours
 
 ## Make it whole-home
 
-1. Reserve `10.0.0.6` for the Shield in the router's DHCP settings.
-2. Set the router's LAN/DHCP DNS server to `10.0.0.6`.
-3. Leave secondary DNS blank, or also use `10.0.0.6`. A public secondary DNS
+1. Reserve `10.0.0.11` for the Shield in the router's DHCP settings.
+2. Set the router's LAN/DHCP DNS server to `10.0.0.11`.
+3. Leave secondary DNS blank, or also use `10.0.0.11`. A public secondary DNS
    lets clients bypass filtering.
 4. Renew DHCP leases or reconnect clients.
 
