@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URI
+import java.time.LocalDate
 
 enum class Destination(val label: String) {
     HOME("Home"),
@@ -382,6 +383,7 @@ class MarqueeController(context: Context) {
                             ),
                         )
                     }
+                    result.movieContinuationsRow?.let(::add)
                     result.freeRow?.let(::add)
                     addAll(result.traktRows)
                     result.tvMazeRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
@@ -1795,9 +1797,11 @@ class MarqueeController(context: Context) {
      * as MonsterVerse, whose films are split across TMDB collections and whose chronology does
      * not match release dates. Every ordinary movie collection still receives a useful fallback.
      */
-    private fun nextWatchAfter(item: MediaItem): NextWatchUiState? {
+    private fun nextWatchAfter(
+        item: MediaItem,
+        completedKeys: Set<String> = watchHistoryStore.completedKeys(),
+    ): NextWatchUiState? {
         if (item.type != MediaType.MOVIE) return null
-        val completedKeys = watchHistoryStore.completedKeys()
         WatchOrderCatalog.nextUnwatchedAfter(item, completedKeys)?.let { suggestion ->
             val seed = suggestion.entry.asMediaItem()
             val hydrated = runCatching { tmdbClient.details(seed).item }.getOrDefault(seed)
@@ -1810,7 +1814,9 @@ class MarqueeController(context: Context) {
         }
 
         val collection = tmdbClient.details(item).collection ?: return null
+        val currentYear = LocalDate.now().year
         val titles = tmdbClient.collectionTitles(collection.id)
+            .filter { title -> title.year.toIntOrNull()?.let { it <= currentYear } == true }
         val currentIndex = titles.indexOfFirst { it.id == item.id }
         if (currentIndex < 0) return null
         val next = (currentIndex + 1 until titles.size)
@@ -2095,6 +2101,9 @@ class MarqueeController(context: Context) {
         val freeRowTask = async { serviceResult { buildFreeRow() } }
         val madeForYouTask = async { serviceResult { buildMadeForYouRow() } }
         val peopleRowsTask = async { serviceResult { buildPeopleYouLikeRows() } }
+        val movieContinuationsTask = async {
+            serviceResult { buildMovieContinuationsRow() }
+        }
 
         val traktRecommendationMovies = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.recommendations(MediaType.MOVIE) } }
@@ -2250,6 +2259,7 @@ class MarqueeController(context: Context) {
         HomeLoad(
             localWatchlist = watchlistStore.load(),
             localPlayback = localPlayback,
+            movieContinuationsRow = movieContinuationsTask.await().getOrDefault(null),
             freeRow = freeRow,
             madeForYouRow = madeForYouRow,
             peopleRows = peopleRows,
@@ -2334,6 +2344,51 @@ class MarqueeController(context: Context) {
                 entry.item.copy(contextLabel = entry.summaryLabel().takeIf(String::isNotBlank))
             },
             subtitle = "${watchHistoryStore.size()} titles tracked on this Shield",
+            personalize = false,
+        )
+    }
+
+    /**
+     * Turns the finish-time suggestion into a durable shelf instead of a one-shot banner.
+     *
+     * Recent completions are the seeds because a universe watched years ago should not crowd the
+     * top of Home. Curated chronology and ordinary TMDB collections share [nextWatchAfter], so a
+     * sequence cannot disagree with the post-watch prompt. Requests run in small batches and the
+     * existing TMDB caches absorb titles whose details were opened recently.
+     */
+    private suspend fun buildMovieContinuationsRow(): MediaRow? = coroutineScope {
+        val completedKeys = watchHistoryStore.completedKeys()
+        val seeds = watchHistoryStore.recent(Int.MAX_VALUE)
+            .asSequence()
+            .filter { it.completed && it.item.type == MediaType.MOVIE }
+            .take(MOVIE_CONTINUATION_SEEDS)
+            .toList()
+        if (seeds.isEmpty()) return@coroutineScope null
+
+        val suggestions = seeds
+            .chunked(RESOLVE_CONCURRENCY)
+            .flatMap { chunk ->
+                chunk.map { watched ->
+                    async(Dispatchers.IO) {
+                        serviceResult {
+                            nextWatchAfter(watched.item, completedKeys)
+                        }.getOrNull()
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            .distinctBy { it.item.key }
+            .take(MOVIE_CONTINUATION_ITEMS)
+        if (suggestions.isEmpty()) return@coroutineScope null
+
+        MediaRow(
+            title = "Continue your movie universes",
+            items = suggestions.map { suggestion ->
+                suggestion.item.copy(
+                    contextLabel = "Next in ${suggestion.sequenceName} · " +
+                        "${suggestion.position}/${suggestion.total}",
+                )
+            },
+            subtitle = "The next unwatched film in story or franchise order",
             personalize = false,
         )
     }
@@ -2718,6 +2773,7 @@ class MarqueeController(context: Context) {
     private data class HomeLoad(
         val localWatchlist: List<MediaItem>,
         val localPlayback: List<MediaItem>,
+        val movieContinuationsRow: MediaRow?,
         val freeRow: MediaRow?,
         val madeForYouRow: MediaRow?,
         val peopleRows: List<MediaRow>,
@@ -2777,6 +2833,8 @@ class MarqueeController(context: Context) {
         private const val RECOMMENDATION_FILTER_LIMIT = 14
         private const val AVAILABILITY_CONCURRENCY = 4
         private const val RESOLVE_CONCURRENCY = 4
+        private const val MOVIE_CONTINUATION_SEEDS = 8
+        private const val MOVIE_CONTINUATION_ITEMS = 8
         private const val PROVIDER_DISCOVERY_CONCURRENCY = 3
         private const val CORE_PROVIDER_CATEGORY_COUNT = 6
         private const val PROVIDER_SHELF_CACHE_ENTRIES = 160

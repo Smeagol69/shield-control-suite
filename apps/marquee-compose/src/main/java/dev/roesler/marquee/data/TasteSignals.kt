@@ -67,20 +67,38 @@ fun buildTasteSignals(
         val imported = entry.source == WatchSource.TRAKT
         val progress = entry.progressPercent
         val signal = when {
-            entry.playCount >= REWATCH_THRESHOLD ->
-                SignalKind.REWATCHED to REWATCH_WEIGHT
-            entry.completed ->
-                SignalKind.COMPLETED to if (imported) IMPORTED_WEIGHT else COMPLETED_WEIGHT
+            entry.playCount >= REWATCH_THRESHOLD -> {
+                // Repeat viewing is stronger evidence than one finish, but sqrt scaling stops a
+                // comfort movie played twenty times from defining the entire profile by itself.
+                val repeatScale = rootScale((entry.playCount - 1).toDouble())
+                    .coerceAtMost(MAX_REWATCH_SCALE)
+                Triple(
+                    SignalKind.REWATCHED,
+                    1.0,
+                    repeatScale * if (imported) IMPORTED_REWATCH_WEIGHT else REWATCH_WEIGHT,
+                )
+            }
+            entry.completed -> Triple(
+                SignalKind.COMPLETED,
+                1.0,
+                if (imported) IMPORTED_WEIGHT else COMPLETED_WEIGHT,
+            )
             progress != null && progress < ABANDON_PERCENT ->
-                SignalKind.ABANDONED to ABANDON_WEIGHT
-            progress != null ->
-                SignalKind.PARTIAL to PARTIAL_WEIGHT
+                Triple(SignalKind.ABANDONED, 0.0, ABANDON_WEIGHT)
+            progress != null -> {
+                // A partial play is not binary feedback. Stopping at 30% leans negative; making
+                // it to 80% leans positive. A soft target teaches that difference without
+                // pretending either is as certain as an explicit thumb or a completed movie.
+                val label = (progress / COMPLETION_REFERENCE_PERCENT)
+                    .coerceIn(PARTIAL_MIN_LABEL, PARTIAL_MAX_LABEL)
+                Triple(SignalKind.PARTIAL, label, PARTIAL_WEIGHT)
+            }
             else -> return@forEach
         }
         signals += TasteSignal(
             item = entry.item,
-            label = if (signal.first == SignalKind.ABANDONED) 0.0 else 1.0,
-            weight = signal.second,
+            label = signal.second,
+            weight = signal.third,
             observedAtEpochMillis = entry.lastWatchedAtEpochMillis,
             kind = signal.first,
         )
@@ -156,6 +174,8 @@ internal fun rootScale(value: Double): Double = sqrt(value.coerceAtLeast(0.0))
 
 private const val RATING_WEIGHT = 1.0
 private const val REWATCH_WEIGHT = 0.85
+private const val IMPORTED_REWATCH_WEIGHT = 0.45
+private const val MAX_REWATCH_SCALE = 1.6
 private const val COMPLETED_WEIGHT = 0.55
 private const val IMPORTED_WEIGHT = 0.35
 private const val ABANDON_WEIGHT = 0.45
@@ -163,5 +183,8 @@ private const val PARTIAL_WEIGHT = 0.20
 private const val WATCHLIST_WEIGHT = 0.25
 private const val NOT_INTERESTED_WEIGHT = 0.6
 private const val REWATCH_THRESHOLD = 2
-private const val ABANDON_PERCENT = 25.0
+private const val ABANDON_PERCENT = 20.0
+private const val COMPLETION_REFERENCE_PERCENT = 90.0
+private const val PARTIAL_MIN_LABEL = 0.15
+private const val PARTIAL_MAX_LABEL = 0.85
 private const val BALANCE_EXPONENT = 0.5

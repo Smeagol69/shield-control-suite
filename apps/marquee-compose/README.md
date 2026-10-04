@@ -16,10 +16,15 @@ legacy package ID `dev.roesler.marquee`.
 - Post-finish watch-order handoff: curated story chronology for shared universes
   (including MonsterVerse) with a one-click `Play next` action, plus automatic
   release-order continuation for other TMDB movie collections.
+- A persistent `Continue your movie universes` Home shelf rebuilds those next-film
+  suggestions from recent completed history, skips movies already finished, and
+  excludes future collection entries.
 - A local watch history that folds together the playback bridge, Trakt history,
   and explicit mark-watched actions into one `Everything you've watched` shelf.
 - Taste-ranked discovery: every catalog row is re-ordered from your ratings, and
   disliked titles stop being suggested.
+- Progress-aware implicit learning: an early exit leans negative, a near-finish
+  leans positive, and repeat watches gain influence with bounded diminishing returns.
 - `Because you liked …` rows on the home screen and on the detail screen of any
   title you liked, built from TMDB similar titles and ranked by the same profile.
 - Regional `Where to watch` data with installed-provider detection.

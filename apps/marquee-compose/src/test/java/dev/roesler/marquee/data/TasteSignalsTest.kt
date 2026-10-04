@@ -61,6 +61,56 @@ class TasteSignalsTest {
     }
 
     @Test
+    fun repeatedRewatchesGrowWithDiminishingReturns() {
+        val signals = buildTasteSignals(
+            verdicts = emptyList(),
+            watched = listOf(watched(1, playCount = 2), watched(2, playCount = 5)),
+            now = now,
+        )
+
+        val twice = signals.first { it.item.id == 1 }
+        val fiveTimes = signals.first { it.item.id == 2 }
+        assertTrue(fiveTimes.weight > twice.weight)
+        assertTrue("repeat evidence must stay bounded", fiveTimes.weight < 1.5)
+    }
+
+    @Test
+    fun importedRewatchIsQuieterThanOneObservedLocally() {
+        val signals = buildTasteSignals(
+            verdicts = emptyList(),
+            watched = listOf(
+                watched(1, source = WatchSource.TRAKT, playCount = 3),
+                watched(2, source = WatchSource.LOCAL_PLAYBACK, playCount = 3),
+            ),
+            now = now,
+        )
+
+        assertTrue(
+            signals.first { it.item.id == 1 }.weight <
+                signals.first { it.item.id == 2 }.weight,
+        )
+    }
+
+    @Test
+    fun partialPlaybackCarriesProgressSensitiveSoftFeedback() {
+        val signals = buildTasteSignals(
+            verdicts = emptyList(),
+            watched = listOf(
+                watched(1, completed = false, progress = 30.0),
+                watched(2, completed = false, progress = 75.0),
+            ),
+            now = now,
+        )
+
+        val early = signals.first { it.item.id == 1 }
+        val late = signals.first { it.item.id == 2 }
+        assertEquals(SignalKind.PARTIAL, early.kind)
+        assertTrue("30% should lean negative", early.label < 0.5)
+        assertTrue("75% should lean positive", late.label > 0.5)
+        assertTrue(late.label > early.label)
+    }
+
+    @Test
     fun importedHistoryCountsForLessThanALocalFinish() {
         val signals = buildTasteSignals(
             verdicts = emptyList(),

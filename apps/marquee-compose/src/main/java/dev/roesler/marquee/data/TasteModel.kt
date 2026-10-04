@@ -334,8 +334,8 @@ data class TasteModel(
     )
 
     companion object {
-        /** Bump when the feature space changes so stale weights are retrained, not reused. */
-        const val MODEL_VERSION = 1
+        /** Bump when features or signal semantics change so stale weights are retrained. */
+        const val MODEL_VERSION = 2
 
         /** Observations needed before the learned model is allowed to reorder anything. */
         const val MIN_OBSERVATIONS = 5

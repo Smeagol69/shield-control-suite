@@ -21,6 +21,14 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         maxEntries = SIMILAR_CACHE_SIZE,
         ttlMillis = CATALOG_TTL_MS,
     )
+    private val titleBundleCache = ExpiringLruCache<String, TitleBundle>(
+        maxEntries = TITLE_BUNDLE_CACHE_SIZE,
+        ttlMillis = CATALOG_TTL_MS,
+    )
+    private val collectionCache = ExpiringLruCache<Int, List<MediaItem>>(
+        maxEntries = COLLECTION_CACHE_SIZE,
+        ttlMillis = AVAILABILITY_TTL_MS,
+    )
 
     @Volatile
     private var genreNames: Map<Int, String>? = null
@@ -317,6 +325,8 @@ class TmdbClient(private val settingsStore: SettingsStore) {
      * so `en` rather than `en-US`, plus the literal string `null` for the neutral ones.
      */
     fun titleBundle(item: MediaItem): TitleBundle {
+        val cacheKey = "${settingsStore.load().region}:${item.key}"
+        titleBundleCache.get(cacheKey)?.let { return it }
         val json = request(
             "/${item.type.apiName}/${item.id}",
             mapOf(
@@ -418,7 +428,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             details = details,
             watchOptions = options,
             recommendations = recommended,
-        )
+        ).also { titleBundleCache.put(cacheKey, it) }
     }
 
     /**
@@ -466,6 +476,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
      */
     fun collectionTitles(collectionId: Int): List<MediaItem> {
         require(collectionId > 0) { "Collection ID must be positive." }
+        collectionCache.get(collectionId)?.let { return it }
         return request("/collection/$collectionId")
             .optJSONArray("parts")
             .toObjectSequence()
@@ -473,6 +484,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
             .filter { it.posterUrl != null }
             .sortedBy { it.year.toIntOrNull() ?: Int.MAX_VALUE }
             .toList()
+            .also { titles -> if (titles.isNotEmpty()) collectionCache.put(collectionId, titles) }
     }
 
     /** Age certification for the region (falling back to US), from TMDB's rating tables. */
@@ -800,6 +812,8 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val WATCH_OPTIONS_CACHE_SIZE = 256
         private const val SIMILAR_CACHE_SIZE = 48
         private const val DISCOVER_CACHE_SIZE = 64
+        private const val TITLE_BUNDLE_CACHE_SIZE = 96
+        private const val COLLECTION_CACHE_SIZE = 48
         private const val AVAILABILITY_TTL_MS = 6L * 60L * 60L * 1_000L
         private const val CATALOG_TTL_MS = 30L * 60L * 1_000L
         private const val DEFAULT_PROVIDER_PRIORITY = 10_000
