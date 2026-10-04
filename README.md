@@ -7,9 +7,11 @@ LSPosed automation, and the root-hosted AdGuard service.
 ## Download the finished apps
 
 Use the [latest Shield Control suite release](https://github.com/Smeagol69/shield-control-suite/releases/latest)
-for the Windows installer, portable executable, updater metadata, Shield Hooks,
-and AdGuard package. Download the current Android TV media app from the
-[Marquee 2.11.0 release](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.11.0).
+for the Windows installer, portable executable, updater metadata, and Shield
+Hooks. Download the current Android TV media app from the
+[Marquee 2.11.0 release](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.11.0)
+and the current root service from the
+[AdGuard Home 0.107.79 release](https://github.com/Smeagol69/shield-control-suite/releases/tag/adguard-v0.107.79).
 Each release includes its SHA-256 checksum manifest.
 
 | Component | Source version | Purpose |

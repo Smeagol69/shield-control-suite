@@ -16,6 +16,8 @@ The release contains:
 
 Marquee also ships as a component release, currently
 [`marquee-v2.11.0`](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.11.0).
+The Shield-ready AdGuard Home package ships separately, currently
+[`adguard-v0.107.79`](https://github.com/Smeagol69/shield-control-suite/releases/tag/adguard-v0.107.79).
 Component releases are intentionally not marked as the repository's latest
 release, so Shield Control continues to resolve its Electron update metadata
 from the latest suite release.
