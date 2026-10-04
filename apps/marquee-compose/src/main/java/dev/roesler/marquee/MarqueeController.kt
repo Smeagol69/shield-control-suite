@@ -19,6 +19,7 @@ import dev.roesler.marquee.data.MediaRowAction
 import dev.roesler.marquee.data.MediaType
 import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.ProviderSort
+import dev.roesler.marquee.data.SearchHistoryStore
 import dev.roesler.marquee.data.SettingsStore
 import dev.roesler.marquee.data.SuppressionStore
 import dev.roesler.marquee.data.TasteFeatures
@@ -42,9 +43,11 @@ import dev.roesler.marquee.data.WatchedTitle
 import dev.roesler.marquee.data.WatchHistoryStore
 import dev.roesler.marquee.data.WatchlistStore
 import dev.roesler.marquee.data.WatchOrderCatalog
+import dev.roesler.marquee.data.WeightedRecommendationList
 import dev.roesler.marquee.data.filterCatalogRows
 import dev.roesler.marquee.data.forHistory
 import dev.roesler.marquee.data.key
+import dev.roesler.marquee.data.reciprocalRankFusion
 import dev.roesler.marquee.playback.PlaybackMonitorService
 import dev.roesler.marquee.playback.PlaybackRecord
 import dev.roesler.marquee.playback.PlaybackCaptureService
@@ -140,6 +143,7 @@ data class SearchUiState(
     val query: String = "",
     val loading: Boolean = false,
     val results: List<MediaItem> = emptyList(),
+    val recentQueries: List<String> = emptyList(),
     val error: String? = null,
 )
 
@@ -169,13 +173,14 @@ data class RatingPromptUiState(
     val providerName: String?,
     val episodeLabel: String?,
     val completed: Boolean,
+    val askForRating: Boolean = true,
     val nextWatch: NextWatchUiState? = null,
 ) {
     val question: String
-        get() = if (completed) {
-            "Finished ${item.title}. Did you like it?"
-        } else {
-            "You stopped watching ${item.title}. Did you like it?"
+        get() = when {
+            !askForRating && nextWatch != null -> "Finished ${item.title}. Here's what comes next."
+            completed -> "Finished ${item.title}. Did you like it?"
+            else -> "You stopped watching ${item.title}. Did you like it?"
         }
 }
 
@@ -229,6 +234,7 @@ data class DetailUiState(
 class MarqueeController(context: Context) {
     private val appContext = context.applicationContext
     private val settingsStore = SettingsStore(appContext)
+    private val searchHistoryStore = SearchHistoryStore(appContext)
     private val watchlistStore = WatchlistStore(appContext)
     private val traktStore = TraktStore(appContext)
     private val tasteStore = TasteStore(appContext)
@@ -291,7 +297,9 @@ class MarqueeController(context: Context) {
     private val _providers = MutableStateFlow(ProvidersUiState())
     val providers: StateFlow<ProvidersUiState> = _providers.asStateFlow()
 
-    private val _search = MutableStateFlow(SearchUiState())
+    private val _search = MutableStateFlow(
+        SearchUiState(recentQueries = searchHistoryStore.load()),
+    )
     val search: StateFlow<SearchUiState> = _search.asStateFlow()
 
     private val _people = MutableStateFlow(PeopleUiState())
@@ -384,6 +392,7 @@ class MarqueeController(context: Context) {
                         )
                     }
                     result.movieContinuationsRow?.let(::add)
+                    result.recentWatchesRow?.let(::add)
                     result.freeRow?.let(::add)
                     addAll(result.traktRows)
                     result.tvMazeRow?.takeIf { it.items.isNotEmpty() }?.let(::add)
@@ -416,7 +425,7 @@ class MarqueeController(context: Context) {
         _search.value = _search.value.copy(query = query, error = null)
         searchJob?.cancel()
         if (query.isBlank()) {
-            _search.value = SearchUiState()
+            _search.value = SearchUiState(recentQueries = searchHistoryStore.load())
             return
         }
         searchJob = scope.launch {
@@ -424,8 +433,17 @@ class MarqueeController(context: Context) {
             _search.value = _search.value.copy(loading = true)
             serviceResult {
                 withContext(Dispatchers.IO) { tmdbClient.searchTitles(query.trim()) }
-            }.onSuccess {
-                _search.value = _search.value.copy(loading = false, results = it)
+            }.onSuccess { results ->
+                val recent = if (results.isEmpty()) {
+                    searchHistoryStore.load()
+                } else {
+                    searchHistoryStore.record(query)
+                }
+                _search.value = _search.value.copy(
+                    loading = false,
+                    results = results,
+                    recentQueries = recent,
+                )
             }.onFailure {
                 if (it is CancellationException) throw it
                 _search.value = _search.value.copy(
@@ -434,6 +452,11 @@ class MarqueeController(context: Context) {
                 )
             }
         }
+    }
+
+    fun clearSearchHistory() {
+        searchHistoryStore.clear()
+        _search.value = _search.value.copy(recentQueries = emptyList())
     }
 
     fun refreshProviders() {
@@ -1752,12 +1775,11 @@ class MarqueeController(context: Context) {
     }
 
     private suspend fun offerRatingPrompt(now: Long) {
-        if (!_settings.value.ratingPrompts) return
         val finished = playbackStore.consumeRateablePlayback(now)
         if (finished.isEmpty()) return
         finished.forEach { record ->
             val media = record.media ?: return@forEach
-            if (tasteStore.verdictOf(media) != null) return@forEach
+            val askForRating = _settings.value.ratingPrompts && tasteStore.verdictOf(media) == null
             val completed = record.isCompleted(now)
             watchHistoryStore.record(
                 WatchedTitle(
@@ -1779,12 +1801,14 @@ class MarqueeController(context: Context) {
             } else {
                 null
             }
+            if (!askForRating && nextWatch == null) return@forEach
             pendingRatingPrompts.addLast(
                 RatingPromptUiState(
                     item = media.forHistory(),
                     providerName = record.providerName,
                     episodeLabel = record.episodeLabel,
                     completed = completed,
+                    askForRating = askForRating,
                     nextWatch = nextWatch,
                 ),
             )
@@ -2104,6 +2128,9 @@ class MarqueeController(context: Context) {
         val movieContinuationsTask = async {
             serviceResult { buildMovieContinuationsRow() }
         }
+        val recentWatchesTask = async {
+            serviceResult { buildRecentWatchesRow() }
+        }
 
         val traktRecommendationMovies = includeTrakt.takeIf { it }?.let {
             async { serviceResult { traktClient.recommendations(MediaType.MOVIE) } }
@@ -2260,6 +2287,7 @@ class MarqueeController(context: Context) {
             localWatchlist = watchlistStore.load(),
             localPlayback = localPlayback,
             movieContinuationsRow = movieContinuationsTask.await().getOrDefault(null),
+            recentWatchesRow = recentWatchesTask.await().getOrDefault(null),
             freeRow = freeRow,
             madeForYouRow = madeForYouRow,
             peopleRows = peopleRows,
@@ -2389,6 +2417,75 @@ class MarqueeController(context: Context) {
                 )
             },
             subtitle = "The next unwatched film in story or franchise order",
+            personalize = false,
+        )
+    }
+
+    /**
+     * Short-term recommendations from what the viewer has actually finished lately.
+     *
+     * The learned model intentionally decays over months, which makes it stable but slow to
+     * notice a weekend horror binge or a sudden run of documentaries. This row supplies that
+     * missing short-term memory. Reciprocal-rank fusion rewards titles independently suggested
+     * by several recent watches, then the durable taste model nudges the fused order rather than
+     * replacing it. Explicit dislikes, hidden titles, and everything already watched stay out.
+     */
+    private suspend fun buildRecentWatchesRow(): MediaRow? = coroutineScope {
+        val profile = tasteStore.profile()
+        val watchedKeys = watchHistoryStore.watchedKeys()
+        val hiddenKeys = suppressionStore.keys()
+        val seeds = watchHistoryStore.recent(Int.MAX_VALUE)
+            .asSequence()
+            .filter(WatchedTitle::completed)
+            .map(WatchedTitle::item)
+            .filter { tasteStore.verdictOf(it) != Verdict.DISLIKED }
+            .distinctBy(MediaItem::key)
+            .take(RECENT_WATCH_SEEDS)
+            .toList()
+        if (seeds.isEmpty()) return@coroutineScope null
+
+        val lists = seeds.mapIndexed { index, seed ->
+            async(Dispatchers.IO) {
+                val similar = serviceResult { tmdbClient.similarTo(seed) }
+                    .getOrDefault(emptyList())
+                    .filterNot { it.key == seed.key }
+                WeightedRecommendationList(
+                    items = similar,
+                    weight = 1.0 / (1.0 + index * RECENT_SEED_DECAY),
+                )
+            }
+        }.awaitAll()
+        val fused = reciprocalRankFusion(lists)
+            .asSequence()
+            .filterNot { it.item.key in watchedKeys || it.item.key in hiddenKeys }
+            .map { candidate ->
+                candidate.item.copy(
+                    contextLabel = if (candidate.sourceCount > 1) {
+                        "Suggested by ${candidate.sourceCount} recent watches"
+                    } else {
+                        "Inspired by recent viewing"
+                    },
+                )
+            }
+            .let { profile.withoutDisliked(it.toList()) }
+        if (fused.size < RECENT_WATCH_MINIMUM) return@coroutineScope null
+
+        val ranked = if (tasteModel.trained) {
+            tasteModel.rank(
+                items = fused,
+                watchedKeys = watchedKeys,
+                profile = profile,
+                // Fusion agreement is meaningful source order; taste should nudge, not erase it.
+                preserveSourceOrder = true,
+            )
+        } else {
+            profile.rank(fused, watchedKeys)
+        }.take(RECENT_WATCH_ITEMS)
+
+        MediaRow(
+            title = "Inspired by what you watched lately",
+            items = ranked,
+            subtitle = seeds.take(2).joinToString(" · ") { it.title },
             personalize = false,
         )
     }
@@ -2774,6 +2871,7 @@ class MarqueeController(context: Context) {
         val localWatchlist: List<MediaItem>,
         val localPlayback: List<MediaItem>,
         val movieContinuationsRow: MediaRow?,
+        val recentWatchesRow: MediaRow?,
         val freeRow: MediaRow?,
         val madeForYouRow: MediaRow?,
         val peopleRows: List<MediaRow>,
@@ -2835,6 +2933,10 @@ class MarqueeController(context: Context) {
         private const val RESOLVE_CONCURRENCY = 4
         private const val MOVIE_CONTINUATION_SEEDS = 8
         private const val MOVIE_CONTINUATION_ITEMS = 8
+        private const val RECENT_WATCH_SEEDS = 4
+        private const val RECENT_WATCH_ITEMS = 24
+        private const val RECENT_WATCH_MINIMUM = 6
+        private const val RECENT_SEED_DECAY = 0.35
         private const val PROVIDER_DISCOVERY_CONCURRENCY = 3
         private const val CORE_PROVIDER_CATEGORY_COUNT = 6
         private const val PROVIDER_SHELF_CACHE_ENTRIES = 160

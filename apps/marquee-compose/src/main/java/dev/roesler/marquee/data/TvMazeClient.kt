@@ -7,11 +7,7 @@ import java.time.LocalDate
 class TvMazeClient {
     fun streamingToday(): List<ScheduledShow> {
         val date = LocalDate.now().toString()
-        var response = request("$BASE_URL/schedule/web?date=$date")
-        if (response.status == 429) {
-            Thread.sleep((response.retryAfterSeconds ?: 2).coerceIn(1, 5) * 1_000L)
-            response = request("$BASE_URL/schedule/web?date=$date")
-        }
+        val response = request("$BASE_URL/schedule/web?date=$date")
         if (response.status !in 200..299) throw TvMazeException.Http(response.status)
 
         val entries = runCatching { JSONArray(response.body) }

@@ -9,16 +9,22 @@ legacy package ID `dev.roesler.marquee`.
 - Trending, popular, now-playing, and top-rated movie/TV rows from TMDB.
 - Title search plus a remote-friendly People browser with popular actors,
   explicit search submission, and dedicated filmography views.
+- Recent title searches stay local and appear as D-pad-friendly shortcuts, with
+  case-insensitive de-duplication and a one-press clear action.
 - Details, runtime or season information, recommendations, and a local
   watchlist, plus a cast row that opens each person's filmography.
 - Like and dislike on every detail screen, plus a prompt that appears on its own
   once something finishes so a verdict costs two presses of the remote.
 - Post-finish watch-order handoff: curated story chronology for shared universes
   (including MonsterVerse) with a one-click `Play next` action, plus automatic
-  release-order continuation for other TMDB movie collections.
+  release-order continuation for other TMDB movie collections. This handoff stays
+  enabled even when rating questions are disabled.
 - A persistent `Continue your movie universes` Home shelf rebuilds those next-film
   suggestions from recent completed history, skips movies already finished, and
   excludes future collection entries.
+- `Inspired by what you watched lately` fuses recommendations from the four most
+  recent completions, rewards agreement across several seeds, and then blends in
+  the durable taste model without losing that short-term context.
 - A local watch history that folds together the playback bridge, Trakt history,
   and explicit mark-watched actions into one `Everything you've watched` shelf.
 - Taste-ranked discovery: every catalog row is re-ordered from your ratings, and
@@ -43,6 +49,8 @@ legacy package ID `dev.roesler.marquee`.
 - A 30-minute, 160-entry per-shelf cache with bounded three-shelf concurrency.
   Completed categories survive provider switches, while the on-screen Refresh
   action clears the cache.
+- Safe GET requests retry brief rate limits and server outages with bounded
+  backoff; mutations are never retried, preventing duplicate Trakt actions.
 - Trakt device authorization, automatic token refresh, personalized movie/show
   recommendations, synced watchlist, playback progress, recent history, and
   explicit watchlist/mark-watched actions.
@@ -148,7 +156,7 @@ progress, but cannot provide exact local progress through this interface.
 
 ## Legacy upgrade
 
-The native app uses version code 11 and the same application ID as the legacy
+The native app uses version code 14 and the same application ID as the legacy
 WebView build. Android permits an in-place upgrade only when both APKs use the
 same signing certificate.
 

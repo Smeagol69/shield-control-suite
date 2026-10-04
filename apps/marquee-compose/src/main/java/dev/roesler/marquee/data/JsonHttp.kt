@@ -30,6 +30,25 @@ internal object JsonHttp {
             throw IOException("Only HTTPS service URLs are allowed.")
         }
 
+        var retriesCompleted = 0
+        while (true) {
+            val response = requestOnce(uri, method, body, headers)
+            if (!HttpRetryPolicy.shouldRetry(method, response.status, retriesCompleted)) {
+                return response
+            }
+            Thread.sleep(
+                HttpRetryPolicy.delayMillis(retriesCompleted, response.retryAfterSeconds),
+            )
+            retriesCompleted += 1
+        }
+    }
+
+    private fun requestOnce(
+        uri: URI,
+        method: String,
+        body: String?,
+        headers: Map<String, String>,
+    ): JsonHttpResponse {
         val connection = uri.toURL().openConnection() as HttpURLConnection
         return try {
             connection.requestMethod = method
@@ -37,7 +56,7 @@ internal object JsonHttp {
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "Marquee/2.7.0 AndroidTV")
+            connection.setRequestProperty("User-Agent", "Marquee AndroidTV")
             headers.forEach(connection::setRequestProperty)
 
             if (body != null) {

@@ -527,7 +527,36 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
             when {
                 state.loading -> BusyState("Searching")
                 state.error != null -> EmptyState("Search failed", state.error)
-                state.query.isBlank() -> EmptyState("Find your next watch", "Use the Shield keyboard or your remote app to search.")
+                state.query.isBlank() && state.recentQueries.isNotEmpty() -> Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SectionHeading(
+                            "Recent searches",
+                            "Pick one instead of typing it again",
+                            modifier = Modifier.weight(1f),
+                        )
+                        ActionButton("Clear", controller::clearSearchHistory)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp),
+                    ) {
+                        items(state.recentQueries, key = { it.lowercase() }) { query ->
+                            ActionButton(query, onClick = { controller.searchTitles(query) })
+                        }
+                    }
+                    EmptyState(
+                        "Find your next watch",
+                        "Use the Shield keyboard, your remote app, or a recent search.",
+                    )
+                }
+                state.query.isBlank() -> EmptyState(
+                    "Find your next watch",
+                    "Use the Shield keyboard or your remote app to search.",
+                )
                 state.results.isEmpty() -> EmptyState("No matches", "Try a different title.")
                 else -> MediaGrid(state.results, controller)
             }
@@ -1596,7 +1625,12 @@ fun RatingPromptBanner(state: RatingPromptUiState, controller: MarqueeController
             contentScale = ContentScale.Crop,
         )
         Column(Modifier.weight(1f)) {
-            AppText("RATE WHAT YOU WATCHED", 9.sp, MarqueePalette.Gold, FontWeight.ExtraBold)
+            AppText(
+                if (state.askForRating) "RATE WHAT YOU WATCHED" else "WATCH NEXT",
+                9.sp,
+                MarqueePalette.Gold,
+                FontWeight.ExtraBold,
+            )
             Spacer(Modifier.height(4.dp))
             AppText(
                 state.question,
@@ -1642,17 +1676,19 @@ fun RatingPromptBanner(state: RatingPromptUiState, controller: MarqueeController
                 modifier = Modifier.focusRequester(requester),
             )
         }
-        ActionButton(
-            label = "👍 Liked it",
-            primary = next == null,
-            onClick = { controller.answerRatingPrompt(Verdict.LIKED) },
-            modifier = if (next == null) Modifier.focusRequester(requester) else Modifier,
-        )
-        ActionButton(
-            label = "👎 Not for me",
-            onClick = { controller.answerRatingPrompt(Verdict.DISLIKED) },
-        )
-        if (next == null) {
+        if (state.askForRating) {
+            ActionButton(
+                label = "👍 Liked it",
+                primary = next == null,
+                onClick = { controller.answerRatingPrompt(Verdict.LIKED) },
+                modifier = if (next == null) Modifier.focusRequester(requester) else Modifier,
+            )
+            ActionButton(
+                label = "👎 Not for me",
+                onClick = { controller.answerRatingPrompt(Verdict.DISLIKED) },
+            )
+        }
+        if (next == null && state.askForRating) {
             ActionButton(label = "Details", onClick = controller::openRatingPromptDetails)
         }
         ActionButton(label = if (next == null) "Skip" else "Later", onClick = controller::dismissRatingPrompt)
