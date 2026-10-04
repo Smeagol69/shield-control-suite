@@ -1,0 +1,59 @@
+name: AdGuard component release
+
+on:
+  push:
+    tags:
+      - "adguard-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v6
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#adguard-v}"
+          notes="release/NOTES-adguard-v${version}.md"
+          checksums="release/SHA256SUMS-adguard-v${version}.txt"
+          test -f "$notes"
+          test -f "$checksums"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+          echo "checksums=$checksums" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify official ARM64 archive
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          CHECKSUMS: ${{ steps.metadata.outputs.checksums }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="AdGuardHome_linux_arm64.tar.gz"
+          curl --fail --location --retry 3 \
+            --output "$asset" \
+            "https://github.com/AdguardTeam/AdGuardHome/releases/download/v${VERSION}/${asset}"
+          sha256sum --check "$CHECKSUMS"
+
+      - name: Publish non-latest component release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          NOTES: ${{ steps.metadata.outputs.notes }}
+          CHECKSUMS: ${{ steps.metadata.outputs.checksums }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            AdGuardHome_linux_arm64.tar.gz \
+            "$CHECKSUMS" \
+            --title "AdGuard Home ${VERSION} for NVIDIA Shield" \
+            --notes-file "$NOTES" \
+            --latest=false
