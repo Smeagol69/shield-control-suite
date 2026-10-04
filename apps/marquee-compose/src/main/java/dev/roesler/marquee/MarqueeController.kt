@@ -19,6 +19,7 @@ import dev.roesler.marquee.data.MediaRowAction
 import dev.roesler.marquee.data.MediaType
 import dev.roesler.marquee.data.Person
 import dev.roesler.marquee.data.ProviderSort
+import dev.roesler.marquee.data.SearchHistoryKind
 import dev.roesler.marquee.data.SearchHistoryStore
 import dev.roesler.marquee.data.SettingsStore
 import dev.roesler.marquee.data.SuppressionStore
@@ -44,9 +45,11 @@ import dev.roesler.marquee.data.WatchHistoryStore
 import dev.roesler.marquee.data.WatchlistStore
 import dev.roesler.marquee.data.WatchOrderCatalog
 import dev.roesler.marquee.data.WeightedRecommendationList
+import dev.roesler.marquee.data.diversifyRecommendations
 import dev.roesler.marquee.data.filterCatalogRows
 import dev.roesler.marquee.data.forHistory
 import dev.roesler.marquee.data.key
+import dev.roesler.marquee.data.improveShelfNovelty
 import dev.roesler.marquee.data.reciprocalRankFusion
 import dev.roesler.marquee.playback.PlaybackMonitorService
 import dev.roesler.marquee.playback.PlaybackRecord
@@ -144,6 +147,7 @@ data class SearchUiState(
     val loading: Boolean = false,
     val results: List<MediaItem> = emptyList(),
     val recentQueries: List<String> = emptyList(),
+    val filter: CatalogFilter = CatalogFilter.ALL,
     val error: String? = null,
 )
 
@@ -164,6 +168,7 @@ data class PeopleUiState(
     val showingPopular: Boolean = false,
     val selectedName: String? = null,
     val credits: List<MediaItem> = emptyList(),
+    val recentQueries: List<String> = emptyList(),
     val error: String? = null,
 )
 
@@ -235,6 +240,7 @@ class MarqueeController(context: Context) {
     private val appContext = context.applicationContext
     private val settingsStore = SettingsStore(appContext)
     private val searchHistoryStore = SearchHistoryStore(appContext)
+    private val peopleSearchHistoryStore = SearchHistoryStore(appContext, SearchHistoryKind.PEOPLE)
     private val watchlistStore = WatchlistStore(appContext)
     private val traktStore = TraktStore(appContext)
     private val tasteStore = TasteStore(appContext)
@@ -302,7 +308,9 @@ class MarqueeController(context: Context) {
     )
     val search: StateFlow<SearchUiState> = _search.asStateFlow()
 
-    private val _people = MutableStateFlow(PeopleUiState())
+    private val _people = MutableStateFlow(
+        PeopleUiState(recentQueries = peopleSearchHistoryStore.load()),
+    )
     val people: StateFlow<PeopleUiState> = _people.asStateFlow()
 
     private val _detail = MutableStateFlow(DetailUiState())
@@ -425,14 +433,32 @@ class MarqueeController(context: Context) {
         _search.value = _search.value.copy(query = query, error = null)
         searchJob?.cancel()
         if (query.isBlank()) {
-            _search.value = SearchUiState(recentQueries = searchHistoryStore.load())
+            _search.value = SearchUiState(
+                recentQueries = searchHistoryStore.load(),
+                filter = _search.value.filter,
+            )
             return
         }
+        if (query.trim().length < MIN_SEARCH_LENGTH) {
+            _search.value = _search.value.copy(loading = false, results = emptyList())
+            return
+        }
+        launchTitleSearch(query.trim(), debounceMillis = 350L)
+    }
+
+    fun submitTitleSearch() {
+        val query = _search.value.query.trim()
+        if (query.length < MIN_SEARCH_LENGTH) return
+        launchTitleSearch(query, debounceMillis = 0L)
+    }
+
+    private fun launchTitleSearch(query: String, debounceMillis: Long) {
+        searchJob?.cancel()
         searchJob = scope.launch {
-            delay(350)
+            if (debounceMillis > 0L) delay(debounceMillis)
             _search.value = _search.value.copy(loading = true)
             serviceResult {
-                withContext(Dispatchers.IO) { tmdbClient.searchTitles(query.trim()) }
+                withContext(Dispatchers.IO) { tmdbClient.searchTitles(query) }
             }.onSuccess { results ->
                 val recent = if (results.isEmpty()) {
                     searchHistoryStore.load()
@@ -457,6 +483,10 @@ class MarqueeController(context: Context) {
     fun clearSearchHistory() {
         searchHistoryStore.clear()
         _search.value = _search.value.copy(recentQueries = emptyList())
+    }
+
+    fun setSearchFilter(filter: CatalogFilter) {
+        _search.value = _search.value.copy(filter = filter)
     }
 
     fun refreshProviders() {
@@ -557,6 +587,10 @@ class MarqueeController(context: Context) {
             loadPopularPeople()
             return
         }
+        if (query.trim().length < MIN_SEARCH_LENGTH) {
+            _people.value = _people.value.copy(loading = false, people = emptyList())
+            return
+        }
         launchPeopleSearch(query.trim(), debounceMillis = 350L)
     }
 
@@ -564,6 +598,8 @@ class MarqueeController(context: Context) {
         val query = _people.value.query.trim()
         if (query.isBlank()) {
             loadPopularPeople()
+        } else if (query.length < MIN_SEARCH_LENGTH) {
+            return
         } else {
             launchPeopleSearch(query, debounceMillis = 0L)
         }
@@ -593,8 +629,17 @@ class MarqueeController(context: Context) {
             )
             serviceResult {
                 withContext(Dispatchers.IO) { tmdbClient.searchPeople(query) }
-            }.onSuccess {
-                _people.value = _people.value.copy(loading = false, people = it)
+            }.onSuccess { people ->
+                val recent = if (people.isEmpty()) {
+                    peopleSearchHistoryStore.load()
+                } else {
+                    peopleSearchHistoryStore.record(query)
+                }
+                _people.value = _people.value.copy(
+                    loading = false,
+                    people = people,
+                    recentQueries = recent,
+                )
             }.onFailure {
                 if (it is CancellationException) throw it
                 _people.value = _people.value.copy(
@@ -608,7 +653,11 @@ class MarqueeController(context: Context) {
     private fun loadPopularPeople() {
         peopleJob?.cancel()
         peopleJob = scope.launch {
-            _people.value = PeopleUiState(loading = true, showingPopular = true)
+            _people.value = PeopleUiState(
+                loading = true,
+                showingPopular = true,
+                recentQueries = peopleSearchHistoryStore.load(),
+            )
             serviceResult {
                 withContext(Dispatchers.IO) { tmdbClient.popularPeople() }
             }.onSuccess {
@@ -621,6 +670,11 @@ class MarqueeController(context: Context) {
                 )
             }
         }
+    }
+
+    fun clearPeopleSearchHistory() {
+        peopleSearchHistoryStore.clear()
+        _people.value = _people.value.copy(recentQueries = emptyList())
     }
 
     fun selectPerson(person: Person) {
@@ -712,6 +766,7 @@ class MarqueeController(context: Context) {
         _people.value = PeopleUiState(
             people = listOf(person),
             selectedName = person.name,
+            recentQueries = peopleSearchHistoryStore.load(),
         )
         _destination.value = Destination.PEOPLE
         selectPerson(person)
@@ -1389,7 +1444,9 @@ class MarqueeController(context: Context) {
     private fun publishHome() {
         // Rank inside each shelf first, then rank the shelves themselves: a perfectly ordered row
         // is worthless if it sits below the fold.
-        homeRankedRows = tasteModel.orderShelves(personalize(homeSourceRows))
+        homeRankedRows = improveShelfNovelty(
+            tasteModel.orderShelves(personalize(homeSourceRows)),
+        )
         val record = liveRecord()
         _home.value = HomeUiState(
             rows = withLivePlayback(homeRankedRows, record, record?.asMediaItem()),
@@ -1453,9 +1510,11 @@ class MarqueeController(context: Context) {
         val used = hashSetOf<String>()
         return seeds.mapNotNull { seed ->
             val pool = serviceResult { tmdbClient.similarTo(seed) }.getOrDefault(emptyList())
-            val items = rankPool(pool, watched)
-                .filter { it.key != seed.key && used.add(it.key) }
-                .take(BECAUSE_YOU_LIKED_ITEMS)
+            val candidates = rankPool(pool, watched)
+                .filterNot { it.key == seed.key || it.key in used }
+                .take(BECAUSE_YOU_LIKED_CANDIDATES)
+            val items = diversifyRecommendations(candidates, BECAUSE_YOU_LIKED_ITEMS)
+            used += items.map(MediaItem::key)
             items.takeIf(List<MediaItem>::isNotEmpty)?.let {
                 MediaRow(
                     title = "Because you liked ${seed.title}",
@@ -2470,7 +2529,7 @@ class MarqueeController(context: Context) {
             .let { profile.withoutDisliked(it.toList()) }
         if (fused.size < RECENT_WATCH_MINIMUM) return@coroutineScope null
 
-        val ranked = if (tasteModel.trained) {
+        val rankedPool = if (tasteModel.trained) {
             tasteModel.rank(
                 items = fused,
                 watchedKeys = watchedKeys,
@@ -2480,7 +2539,8 @@ class MarqueeController(context: Context) {
             )
         } else {
             profile.rank(fused, watchedKeys)
-        }.take(RECENT_WATCH_ITEMS)
+        }
+        val ranked = diversifyRecommendations(rankedPool, RECENT_WATCH_ITEMS)
 
         MediaRow(
             title = "Inspired by what you watched lately",
@@ -2639,7 +2699,10 @@ class MarqueeController(context: Context) {
             .distinctBy { it.key }
             .filterNot { it.key in watched }
         if (pool.size < MADE_FOR_YOU_MINIMUM) return@coroutineScope null
-        val ranked = rankPool(pool, watched).take(MADE_FOR_YOU_ITEMS)
+        val ranked = diversifyRecommendations(
+            rankPool(pool, watched),
+            MADE_FOR_YOU_ITEMS,
+        )
         ranked.takeIf(List<MediaItem>::isNotEmpty)?.let {
             MediaRow(
                 title = "Made for you",
@@ -2931,6 +2994,7 @@ class MarqueeController(context: Context) {
         private const val RECOMMENDATION_FILTER_LIMIT = 14
         private const val AVAILABILITY_CONCURRENCY = 4
         private const val RESOLVE_CONCURRENCY = 4
+        private const val MIN_SEARCH_LENGTH = 2
         private const val MOVIE_CONTINUATION_SEEDS = 8
         private const val MOVIE_CONTINUATION_ITEMS = 8
         private const val RECENT_WATCH_SEEDS = 4
@@ -2949,6 +3013,7 @@ class MarqueeController(context: Context) {
         private const val FIRST_TMDB_ROW_TITLE = "Popular movies"
         private const val BECAUSE_YOU_LIKED_ROWS = 2
         private const val BECAUSE_YOU_LIKED_ITEMS = 20
+        private const val BECAUSE_YOU_LIKED_CANDIDATES = 40
         private const val WATCHED_ROW_LIMIT = 30
         private const val FREE_ROW_LIMIT = 20
         private const val PERSON_AFFINITY_SEEDS = 8

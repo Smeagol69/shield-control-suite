@@ -7,6 +7,7 @@ import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
+import java.util.Locale
 
 class TmdbClient(private val settingsStore: SettingsStore) {
     private val watchOptionsCache = ExpiringLruCache<String, WatchOptions>(
@@ -27,6 +28,18 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     )
     private val collectionCache = ExpiringLruCache<Int, List<MediaItem>>(
         maxEntries = COLLECTION_CACHE_SIZE,
+        ttlMillis = AVAILABILITY_TTL_MS,
+    )
+    private val titleSearchCache = ExpiringLruCache<String, List<MediaItem>>(
+        maxEntries = SEARCH_CACHE_SIZE,
+        ttlMillis = SEARCH_TTL_MS,
+    )
+    private val peopleSearchCache = ExpiringLruCache<String, List<Person>>(
+        maxEntries = SEARCH_CACHE_SIZE,
+        ttlMillis = SEARCH_TTL_MS,
+    )
+    private val personCreditsCache = ExpiringLruCache<Int, List<MediaItem>>(
+        maxEntries = PERSON_CREDITS_CACHE_SIZE,
         ttlMillis = AVAILABILITY_TTL_MS,
     )
 
@@ -233,9 +246,32 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         return items
     }
 
-    fun searchTitles(query: String): List<MediaItem> =
-        mediaList(request("/search/multi", mapOf("query" to query)))
-            .filter { it.title.isNotBlank() }
+    fun searchTitles(query: String): List<MediaItem> {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return emptyList()
+        val cacheKey = trimmed.lowercase(Locale.ROOT)
+        titleSearchCache.get(cacheKey)?.let { return it }
+        val results = collectUniquePages(
+            targetSize = SEARCH_RESULT_TARGET,
+            maxPages = SEARCH_MAX_PAGES,
+            keyOf = MediaItem::key,
+        ) { page ->
+            val response = request(
+                "/search/multi",
+                mapOf(
+                    "query" to trimmed,
+                    "include_adult" to "false",
+                    "page" to page.toString(),
+                ),
+            )
+            PageResult(
+                items = mediaItems(response).filter { it.title.isNotBlank() },
+                totalPages = response.optInt("total_pages", page),
+            )
+        }.let { rankTitleSearch(trimmed, it) }
+        if (results.isNotEmpty()) titleSearchCache.put(cacheKey, results)
+        return results
+    }
 
     fun findTv(imdbId: String?, title: String, year: String): MediaItem? {
         val exact = imdbId
@@ -263,13 +299,19 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     }
 
     fun searchPeople(query: String): List<Person> {
-        val results = request("/search/person", mapOf("query" to query)).optJSONArray("results")
-            ?: JSONArray()
-        return people(results)
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return popularPeople()
+        val cacheKey = "search:${trimmed.lowercase(Locale.ROOT)}"
+        peopleSearchCache.get(cacheKey)?.let { return it }
+        return pagedPeople("/search/person", mapOf("query" to trimmed))
+            .also { if (it.isNotEmpty()) peopleSearchCache.put(cacheKey, it) }
     }
 
-    fun popularPeople(): List<Person> =
-        people(request("/person/popular").optJSONArray("results") ?: JSONArray())
+    fun popularPeople(): List<Person> {
+        peopleSearchCache.get(POPULAR_PEOPLE_CACHE_KEY)?.let { return it }
+        return pagedPeople("/person/popular")
+            .also { if (it.isNotEmpty()) peopleSearchCache.put(POPULAR_PEOPLE_CACHE_KEY, it) }
+    }
 
     /**
      * The top-billed cast of a title, for working out which faces a viewer keeps choosing.
@@ -301,14 +343,28 @@ class TmdbClient(private val settingsStore: SettingsStore) {
     }
 
     fun personCredits(personId: Int): List<MediaItem> {
-        val cast = request("/person/$personId/combined_credits").optJSONArray("cast") ?: JSONArray()
-        val seen = hashSetOf<String>()
-        return cast.toObjectSequence()
-            .mapNotNull(::mediaItem)
-            .filter { seen.add(it.key) }
-            .sortedByDescending(MediaItem::rating)
-            .take(RESULT_LIMIT)
-            .toList()
+        require(personId > 0) { "Person ID must be positive." }
+        personCreditsCache.get(personId)?.let { return it }
+        val response = request("/person/$personId/combined_credits")
+        val candidates = buildList {
+            response.optJSONArray("cast").toObjectSequence().forEach { credit ->
+                val character = credit.optString("character").trim()
+                credit.toPersonCreditCandidate(
+                    roleLabel = character.takeIf(String::isNotBlank)?.let { "as ${it.take(70)}" },
+                    rolePriority = CAST_CREDIT_PRIORITY,
+                )?.let(::add)
+            }
+            response.optJSONArray("crew").toObjectSequence().forEach { credit ->
+                val job = credit.optString("job").trim()
+                val department = credit.optString("department").trim()
+                credit.toPersonCreditCandidate(
+                    roleLabel = job.ifBlank { department }.take(70).takeIf(String::isNotBlank),
+                    rolePriority = crewCreditPriority(job, department),
+                )?.let(::add)
+            }
+        }
+        return rankPersonCredits(candidates, PERSON_CREDIT_LIMIT)
+            .also { if (it.isNotEmpty()) personCreditsCache.put(personId, it) }
     }
 
     fun details(item: MediaItem): MediaDetails = titleBundle(item).details
@@ -682,11 +738,26 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 .toList()
         }
 
+    private fun pagedPeople(
+        path: String,
+        parameters: Map<String, String> = emptyMap(),
+    ): List<Person> = collectUniquePages(
+        targetSize = PEOPLE_RESULT_TARGET,
+        maxPages = SEARCH_MAX_PAGES,
+        keyOf = Person::id,
+    ) { page ->
+        val response = request(path, parameters + ("page" to page.toString()))
+        PageResult(
+            items = people(response.optJSONArray("results") ?: JSONArray()),
+            totalPages = response.optInt("total_pages", page),
+        )
+    }
+
     private fun people(results: JSONArray): List<Person> = buildList {
-        for (index in 0 until minOf(results.length(), RESULT_LIMIT)) {
+        for (index in 0 until results.length()) {
             val person = results.optJSONObject(index) ?: continue
             val id = person.optInt("id")
-            val name = person.optString("name")
+            val name = person.optString("name").trim()
             if (id <= 0 || name.isBlank()) continue
             val knownFor = person.optJSONArray("known_for")
                 .toObjectSequence()
@@ -694,6 +765,7 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                 .filter(String::isNotBlank)
                 .take(3)
                 .joinToString()
+                .ifBlank { person.optString("known_for_department").trim() }
             add(
                 Person(
                     id = id,
@@ -702,6 +774,34 @@ class TmdbClient(private val settingsStore: SettingsStore) {
                     knownFor = knownFor,
                 ),
             )
+        }
+    }
+
+    private fun JSONObject.toPersonCreditCandidate(
+        roleLabel: String?,
+        rolePriority: Double,
+    ): PersonCreditCandidate? {
+        val item = mediaItem(this) ?: return null
+        return PersonCreditCandidate(
+            item = item,
+            popularity = optDouble("popularity").takeIf(Double::isFinite) ?: 0.0,
+            voteCount = optInt("vote_count").coerceAtLeast(0),
+            roleLabel = roleLabel,
+            rolePriority = rolePriority,
+        )
+    }
+
+    private fun crewCreditPriority(job: String, department: String): Double {
+        val normalizedJob = job.lowercase(Locale.ROOT)
+        val normalizedDepartment = department.lowercase(Locale.ROOT)
+        return when {
+            "director" in normalizedJob -> 1.20
+            "creator" in normalizedJob || "showrunner" in normalizedJob -> 1.10
+            "screenplay" in normalizedJob || "writer" in normalizedJob -> 0.80
+            normalizedDepartment == "directing" -> 0.75
+            normalizedDepartment == "writing" -> 0.60
+            "producer" in normalizedJob -> 0.35
+            else -> 0.15
         }
     }
 
@@ -801,6 +901,10 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val BASE_URL = "https://api.themoviedb.org/3"
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val RESULT_LIMIT = 30
+        private const val SEARCH_RESULT_TARGET = 60
+        private const val PEOPLE_RESULT_TARGET = 50
+        private const val PERSON_CREDIT_LIMIT = 60
+        private const val SEARCH_MAX_PAGES = 3
         private const val DETAIL_CAST_LIMIT = 18
         /** Only the leads carry a taste signal; a tenth-billed role is noise. */
         private const val AFFINITY_CAST_LIMIT = 5
@@ -814,9 +918,14 @@ class TmdbClient(private val settingsStore: SettingsStore) {
         private const val DISCOVER_CACHE_SIZE = 64
         private const val TITLE_BUNDLE_CACHE_SIZE = 96
         private const val COLLECTION_CACHE_SIZE = 48
+        private const val SEARCH_CACHE_SIZE = 32
+        private const val PERSON_CREDITS_CACHE_SIZE = 48
         private const val AVAILABILITY_TTL_MS = 6L * 60L * 60L * 1_000L
         private const val CATALOG_TTL_MS = 30L * 60L * 1_000L
+        private const val SEARCH_TTL_MS = 20L * 60L * 1_000L
         private const val DEFAULT_PROVIDER_PRIORITY = 10_000
+        private const val CAST_CREDIT_PRIORITY = 0.45
+        private const val POPULAR_PEOPLE_CACHE_KEY = "popular"
 
         val PROVIDER_PACKAGES = mapOf(
             8 to "com.netflix.ninja",

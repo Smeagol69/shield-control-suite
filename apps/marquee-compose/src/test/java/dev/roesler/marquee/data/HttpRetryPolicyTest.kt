@@ -1,5 +1,7 @@
 package dev.roesler.marquee.data
 
+import java.io.IOException
+import java.net.SocketTimeoutException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,5 +23,13 @@ class HttpRetryPolicyTest {
         assertEquals(700L, HttpRetryPolicy.delayMillis(1, null))
         assertEquals(2_000L, HttpRetryPolicy.delayMillis(0, 2))
         assertEquals(4_000L, HttpRetryPolicy.delayMillis(0, 30))
+    }
+
+    @Test
+    fun `retries transient sockets but not arbitrary parsing failures`() {
+        assertTrue(HttpRetryPolicy.shouldRetry("GET", SocketTimeoutException(), 0))
+        assertFalse(HttpRetryPolicy.shouldRetry("POST", SocketTimeoutException(), 0))
+        assertFalse(HttpRetryPolicy.shouldRetry("GET", SocketTimeoutException(), 2))
+        assertFalse(HttpRetryPolicy.shouldRetry("GET", IOException("invalid body"), 0))
     }
 }

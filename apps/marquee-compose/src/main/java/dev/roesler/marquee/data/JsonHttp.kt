@@ -32,7 +32,14 @@ internal object JsonHttp {
 
         var retriesCompleted = 0
         while (true) {
-            val response = requestOnce(uri, method, body, headers)
+            val response = try {
+                requestOnce(uri, method, body, headers)
+            } catch (error: IOException) {
+                if (!HttpRetryPolicy.shouldRetry(method, error, retriesCompleted)) throw error
+                Thread.sleep(HttpRetryPolicy.delayMillis(retriesCompleted, retryAfterSeconds = null))
+                retriesCompleted += 1
+                continue
+            }
             if (!HttpRetryPolicy.shouldRetry(method, response.status, retriesCompleted)) {
                 return response
             }

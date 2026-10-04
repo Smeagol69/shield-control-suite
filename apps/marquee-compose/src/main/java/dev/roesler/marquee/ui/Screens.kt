@@ -142,7 +142,7 @@ fun ProvidersScreen(
     Column(Modifier.fillMaxSize()) {
         SectionHeading(
             "Streaming providers",
-            selected?.let { "${it.name} · live regional catalog" }
+            subtitle = selected?.let { "${it.name} · live regional catalog" }
                 ?: "Live regional catalogs · installed apps first",
         )
         Spacer(Modifier.height(6.dp))
@@ -265,7 +265,7 @@ private fun CategoryHeader(row: MediaRow, position: Int, total: Int) {
     ) {
         SectionHeading(
             row.title,
-            "$position/$total · ${row.subtitle ?: "${row.items.size} titles"}",
+            subtitle = "$position/$total · ${row.subtitle ?: "${row.items.size} titles"}",
         )
     }
 }
@@ -478,7 +478,7 @@ private fun MediaShelf(
     onFocused: (MediaItem) -> Unit,
 ) {
     Column {
-        SectionHeading(row.title, row.subtitle ?: "${row.items.size} titles")
+        SectionHeading(row.title, subtitle = row.subtitle ?: "${row.items.size} titles")
         Spacer(Modifier.height(6.dp))
         MediaShelfRow(row, controller, onFocused)
     }
@@ -513,15 +513,32 @@ private fun MediaShelfRow(
 
 @Composable
 fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
+    val visibleResults = remember(state.results, state.filter) {
+        state.results.filter { state.filter.accepts(it.type) }
+    }
     Column(Modifier.fillMaxSize()) {
-        SectionHeading("Search", "Movies and television")
+        SectionHeading("Search", subtitle = "Movies and television")
         Spacer(Modifier.height(13.dp))
-        AppInput(
-            value = state.query,
-            onValueChange = controller::searchTitles,
-            placeholder = "Search movies and shows…",
+        Row(
             modifier = Modifier.fillMaxWidth(),
-        )
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppInput(
+                value = state.query,
+                onValueChange = controller::searchTitles,
+                placeholder = "Search movies and shows…",
+                modifier = Modifier.weight(1f),
+                onSubmit = controller::submitTitleSearch,
+            )
+            CatalogFilter.entries.forEach { filter ->
+                ActionButton(
+                    label = filter.label,
+                    primary = state.filter == filter,
+                    onClick = { controller.setSearchFilter(filter) },
+                )
+            }
+        }
         Spacer(Modifier.height(15.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
@@ -534,8 +551,8 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
                     ) {
                         SectionHeading(
                             "Recent searches",
-                            "Pick one instead of typing it again",
                             modifier = Modifier.weight(1f),
+                            subtitle = "Pick one instead of typing it again",
                         )
                         ActionButton("Clear", controller::clearSearchHistory)
                     }
@@ -557,8 +574,16 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
                     "Find your next watch",
                     "Use the Shield keyboard or your remote app to search.",
                 )
+                state.query.trim().length < 2 -> EmptyState(
+                    "Keep typing",
+                    "Enter at least two characters.",
+                )
                 state.results.isEmpty() -> EmptyState("No matches", "Try a different title.")
-                else -> MediaGrid(state.results, controller)
+                visibleResults.isEmpty() -> EmptyState(
+                    "No ${state.filter.label.lowercase()} found",
+                    "Try All or a different title.",
+                )
+                else -> MediaGrid(visibleResults, controller)
             }
         }
     }
@@ -567,7 +592,7 @@ fun SearchScreen(state: SearchUiState, controller: MarqueeController) {
 @Composable
 fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
     Column(Modifier.fillMaxSize()) {
-        SectionHeading("People", "Search actors and directors")
+        SectionHeading("People", subtitle = "Search actors and directors")
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -589,6 +614,30 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
         }
         Spacer(Modifier.height(10.dp))
 
+        if (
+            state.selectedName == null &&
+            state.query.isBlank() &&
+            state.recentQueries.isNotEmpty()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppText("Recent", 10.sp, MarqueePalette.Muted, FontWeight.Bold)
+                LazyRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(state.recentQueries, key = { it.lowercase() }) { query ->
+                        ActionButton(query, onClick = { controller.searchPeople(query) })
+                    }
+                }
+                ActionButton("Clear", controller::clearPeopleSearchHistory)
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+
         if (state.selectedName != null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -597,6 +646,7 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
                 SectionHeading(
                     "${state.selectedName} · Filmography",
                     modifier = Modifier.weight(1f),
+                    subtitle = "${state.credits.size} acting and crew credits",
                 )
                 ActionButton(
                     label = "Back to people",
@@ -616,7 +666,7 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
         } else {
             SectionHeading(
                 if (state.showingPopular && state.query.isBlank()) "Popular people" else "Search results",
-                if (state.loading) "Updating…" else "${state.people.size} people",
+                subtitle = if (state.loading) "Updating…" else "${state.people.size} people",
             )
             Spacer(Modifier.height(6.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -626,6 +676,8 @@ fun PeopleScreen(state: PeopleUiState, controller: MarqueeController) {
                         EmptyState("People search failed", state.error)
                     state.people.isEmpty() && state.query.isBlank() ->
                         EmptyState("Explore by cast and crew", "Popular people will appear here.")
+                    state.people.isEmpty() && state.query.trim().length < 2 ->
+                        EmptyState("Keep typing", "Enter at least two characters.")
                     state.people.isEmpty() ->
                         EmptyState("No people found", "Try a full actor or director name.")
                     else -> PeopleGrid(state.people, controller)
@@ -648,7 +700,8 @@ fun BrowseScreen(state: BrowseUiState, controller: MarqueeController) {
     Column(Modifier.fillMaxSize()) {
         SectionHeading(
             "Browse",
-            state.selected?.let { "${it.axis.label} · ${it.label}" } ?: "Pick a decade, mood, or length",
+            subtitle = state.selected?.let { "${it.axis.label} · ${it.label}" }
+                ?: "Pick a decade, mood, or length",
         )
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1499,7 +1552,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
             }
 
             if (state.watchOptions.providers.isNotEmpty()) {
-                item { SectionHeading("Where to watch", "Availability for your region") }
+                item { SectionHeading("Where to watch", subtitle = "Availability for your region") }
                 item {
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1516,7 +1569,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
 
             val castMembers = state.details?.cast.orEmpty()
             if (castMembers.isNotEmpty()) {
-                item { SectionHeading("Cast", "Select an actor for their filmography") }
+                item { SectionHeading("Cast", subtitle = "Select an actor for their filmography") }
                 item {
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1536,7 +1589,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                 item {
                     SectionHeading(
                         group.name,
-                        "The rest of the franchise, in release order",
+                        subtitle = "The rest of the franchise, in release order",
                     )
                 }
                 item {
@@ -1555,7 +1608,7 @@ fun DetailScreen(state: DetailUiState, controller: MarqueeController) {
                 item {
                     SectionHeading(
                         "Because you liked ${media.title}",
-                        "Similar titles, ranked by your ratings",
+                        subtitle = "Similar titles, ranked by your ratings",
                     )
                 }
                 item {

@@ -322,8 +322,8 @@ fun AppInput(
 @Composable
 fun SectionHeading(
     title: String,
-    subtitle: String? = null,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
 ) {
     val layout = LocalMarqueeLayout.current
     Row(

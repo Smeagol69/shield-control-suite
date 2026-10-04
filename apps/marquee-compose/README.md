@@ -7,8 +7,12 @@ legacy package ID `dev.roesler.marquee`.
 ## Features
 
 - Trending, popular, now-playing, and top-rated movie/TV rows from TMDB.
-- Title search plus a remote-friendly People browser with popular actors,
-  explicit search submission, and dedicated filmography views.
+- Cached, three-page title search with exact-title/year ranking, All/Movies/Series
+  filters, Enter-to-submit, and up to 60 poster results.
+- A remote-friendly People browser with cached 50-person search, recent-search
+  shortcuts, and complete acting/directing/writing filmographies. Cast and crew
+  credits are merged and ranked by vote confidence plus recognizability instead
+  of letting obscure one-vote titles dominate.
 - Recent title searches stay local and appear as D-pad-friendly shortcuts, with
   case-insensitive de-duplication and a one-press clear action.
 - Details, runtime or season information, recommendations, and a local
@@ -25,6 +29,10 @@ legacy package ID `dev.roesler.marquee`.
 - `Inspired by what you watched lately` fuses recommendations from the four most
   recent completions, rewards agreement across several seeds, and then blends in
   the durable taste model without losing that short-term context.
+- A deterministic diversity pass protects the strongest recommendation while
+  preventing one genre, format, or era from filling every personalized slot.
+- Cross-shelf novelty removes avoidable repeats from reorderable discovery rows
+  while preserving Watchlist, Continue Watching, Up Next, and other semantic rows.
 - A local watch history that folds together the playback bridge, Trakt history,
   and explicit mark-watched actions into one `Everything you've watched` shelf.
 - Taste-ranked discovery: every catalog row is re-ordered from your ratings, and
@@ -49,8 +57,9 @@ legacy package ID `dev.roesler.marquee`.
 - A 30-minute, 160-entry per-shelf cache with bounded three-shelf concurrency.
   Completed categories survive provider switches, while the on-screen Refresh
   action clears the cache.
-- Safe GET requests retry brief rate limits and server outages with bounded
-  backoff; mutations are never retried, preventing duplicate Trakt actions.
+- Safe GET requests retry brief rate limits, server outages, socket resets, and
+  timeouts with bounded backoff; mutations are never retried, preventing duplicate
+  Trakt actions.
 - Trakt device authorization, automatic token refresh, personalized movie/show
   recommendations, synced watchlist, playback progress, recent history, and
   explicit watchlist/mark-watched actions.
@@ -156,7 +165,7 @@ progress, but cannot provide exact local progress through this interface.
 
 ## Legacy upgrade
 
-The native app uses version code 14 and the same application ID as the legacy
+The native app uses version code 15 and the same application ID as the legacy
 WebView build. Android permits an in-place upgrade only when both APKs use the
 same signing certificate.
 
