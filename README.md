@@ -9,15 +9,15 @@ LSPosed automation, and the root-hosted AdGuard service.
 Use the [latest Shield Control suite release](https://github.com/Smeagol69/shield-control-suite/releases/latest)
 for the Windows installer, portable executable, updater metadata, Shield Hooks,
 and AdGuard package. Download the current Android TV media app from the
-[Marquee 2.7.0 release](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.7.0).
+[Marquee 2.11.0 release](https://github.com/Smeagol69/shield-control-suite/releases/tag/marquee-v2.11.0).
 Each release includes its SHA-256 checksum manifest.
 
 | Component | Source version | Purpose |
 | --- | --- | --- |
 | Shield Control | 1.2.1 | Standalone Windows control center with bundled ADB, scrcpy, and GitHub Release updates |
-| Marquee | 2.7.0 | Native Android TV discovery, provider, Trakt, cast, ratings, and playback hub |
+| Marquee | 2.11.0 | Native Android TV discovery, provider, Trakt, cast, ratings, and playback hub |
 | Shield Hooks | 0.2.0 | Package-scoped LSPosed observation and constrained BeanShell automation |
-| AdGuard Home service | 0.107.78 | Boot-persistent whole-home DNS filtering on the Shield |
+| AdGuard Home service | 0.107.79 | Boot-persistent whole-home DNS filtering on the Shield |
 
 ## Projects
 
@@ -33,7 +33,7 @@ Each release includes its SHA-256 checksum manifest.
 
 Shield Control 1.2 routes pulls, screenshots, and Kodi logs to the collision-safe
 `Downloads\KodiDrop` folder, can download whole device folders, and checks GitHub
-Releases every 15 minutes. Marquee 2.7 keeps the 60-title shelves across 26
+Releases every 15 minutes. Marquee 2.11 keeps the 60-title shelves across 26
 provider categories and adds like/dislike ratings, a post-playback rating prompt,
 a local watch history folded from the playback bridge and Trakt, taste-ranked
 discovery rows, and `Because you liked …` shelves on home and detail screens.

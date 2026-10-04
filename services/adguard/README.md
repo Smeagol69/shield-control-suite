@@ -1,6 +1,6 @@
 # AdGuard Home on NVIDIA Shield
 
-AdGuard Home v0.107.78 runs as root on the Shield. Its current reserved address is
+AdGuard Home v0.107.79 runs as root on the Shield. Its current reserved address is
 `10.0.0.11`; the maintenance scripts discover the active adb address automatically.
 
 ## Endpoints
